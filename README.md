@@ -35,7 +35,7 @@ Only the **host** can start a draft. Once everyone is in the lobby, the host typ
 This kicks off the draft sequence:
 
 1. Each player is assigned a random **slot number** (their turn order).
-2. The role pool is built from whichever roles are enabled in the TOUM lobby settings. If none are detected, all roles are available.
+2. The role pool is built from the full list of available TOUM roles (see [Role Pool](#role-pool) below).
 3. Players pick one at a time in slot order.
 
 ---
@@ -108,13 +108,35 @@ Draft recap is now: OFF
 
 ## Role Pool
 
-The mod reads your TOUM lobby settings to build the role pool automatically — only roles with a count greater than 0 are included. If no roles are detected, the full list of TOUM roles is used as a fallback.
+The draft draws from a fixed list of all TOUM roles. Every draft pick is chosen from this pool, with already-picked roles removed so no two players get the same role.
 
----
+The current pool includes:
 
-## Solo / Test Mode
+**Crew — Investigative:** Aurial, Forensic, Lookout, Mystic, Seer, Snitch, Sonar, Trapper
 
-If fewer than 2 players are in the lobby when `/draft` is typed, the mod enters **solo test mode** with 4 simulated slots so the host can test the flow without other players.
+**Crew — Killing:** Deputy, Hunter, Sheriff, Veteran, Vigilante
+
+**Crew — Power:** Jailor, Monarch, Politician, Prosecutor, Swapper, Time Lord
+
+**Crew — Protective:** Altruist, Cleric, Medic, Mirrorcaster, Oracle, Warden
+
+**Crew — Support:** Engineer, Imitator, Medium, Plumber, Sentry, Transporter
+
+**Impostor — Concealing:** Eclipsal, Escapist, Grenadier, Morphling, Swooper, Venerer
+
+**Impostor — Killing:** Ambusher, Bomber, Parasite, Scavenger, Warlock
+
+**Impostor — Power:** Ambassador, Puppeteer, Spellslinger
+
+**Impostor — Support:** Blackmailer, Hypnotist, Janitor, Miner, Undertaker
+
+**Neutral — Benign:** Fairy, Mercenary, Survivor
+
+**Neutral — Evil:** Doomsayer, Executioner, Jester
+
+**Neutral — Killing:** Arsonist, Glitch, Juggernaut, Plaguebearer, Soul Collector, Vampire, Werewolf
+
+**Neutral — Outlier:** Chef, Inquisitor
 
 ---
 
