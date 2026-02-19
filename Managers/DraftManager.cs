@@ -27,7 +27,15 @@ namespace DraftModeTOUM.Managers
         public static float TurnTimeLeft { get; private set; }
         public static float TurnDuration { get; set; } = 10f;
 
+        // ── Recap toggle ─────────────────────────────────────────────────────
         public static bool ShowRecap { get; set; } = true;
+
+        // ── Faction caps — change these to adjust limits ─────────────────────
+        public static int MaxImpostors { get; set; } = 2;
+        public static int MaxNeutrals { get; set; } = 3;
+
+        private static int _impostorsDrafted = 0;
+        private static int _neutralsDrafted = 0;
 
         private static bool _soloTestMode = false;
         public static List<int> TurnOrder { get; private set; } = new List<int>();
@@ -77,7 +85,8 @@ namespace DraftModeTOUM.Managers
             Reset();
             UpCommandRequests.Clear();
 
-            var players = PlayerControl.AllPlayerControls.ToArray().Where(p => p != null && !p.Data.Disconnected).ToList();
+            var players = PlayerControl.AllPlayerControls.ToArray()
+                .Where(p => p != null && !p.Data.Disconnected).ToList();
             _soloTestMode = (players.Count < 2);
 
             _lobbyRolePool = RolePoolBuilder.BuildPool();
@@ -120,6 +129,8 @@ namespace DraftModeTOUM.Managers
             _draftedRoles.Clear();
             TurnOrder.Clear();
             _soloTestMode = false;
+            _impostorsDrafted = 0;
+            _neutralsDrafted = 0;
             UpCommandRequests.Clear();
         }
 
@@ -130,16 +141,71 @@ namespace DraftModeTOUM.Managers
             if (TurnTimeLeft <= 0f) AutoPickRandom();
         }
 
+        // Returns roles that are undrafted and within faction caps
+        private static List<string> GetAvailableRoles()
+        {
+            return _lobbyRolePool.Where(r =>
+            {
+                if (_draftedRoles.Contains(r)) return false;
+                if (RoleCategory.IsImpostor(r) && _impostorsDrafted >= MaxImpostors) return false;
+                if (RoleCategory.IsNeutral(r) && _neutralsDrafted >= MaxNeutrals) return false;
+                return true;
+            }).ToList();
+        }
+
         private static void OfferRolesToCurrentPicker()
         {
             var state = GetCurrentPickerState();
             if (state == null) return;
             state.IsPickingNow = true;
-            state.OfferedRoles = _lobbyRolePool
-                .Where(r => !_draftedRoles.Contains(r))
-                .OrderBy(_ => UnityEngine.Random.value)
-                .Take(3)
-                .ToList();
+
+            var available = GetAvailableRoles();
+
+            if (available.Count == 0)
+            {
+                // Absolute fallback — should rarely happen
+                state.OfferedRoles = new List<string> { "Crewmate", "Crewmate", "Crewmate" };
+            }
+            else
+            {
+                // Try to offer variety: up to 1 impostor and 1 neutral in the 3 options,
+                // only if their caps haven't been reached yet
+                var impostorOffer = available
+                    .Where(r => RoleCategory.IsImpostor(r))
+                    .OrderBy(_ => UnityEngine.Random.value)
+                    .Take(1).ToList();
+
+                var neutralOffer = available
+                    .Where(r => RoleCategory.IsNeutral(r))
+                    .OrderBy(_ => UnityEngine.Random.value)
+                    .Take(1).ToList();
+
+                var crewOffer = available
+                    .Where(r => RoleCategory.GetFaction(r) == RoleFaction.Crewmate)
+                    .OrderBy(_ => UnityEngine.Random.value)
+                    .ToList();
+
+                var offered = new List<string>();
+                offered.AddRange(impostorOffer);
+                offered.AddRange(neutralOffer);
+
+                // Fill to 3 with crew first, then any remaining available roles
+                int needed = 3 - offered.Count;
+                offered.AddRange(crewOffer.Take(needed));
+
+                if (offered.Count < 3)
+                {
+                    var extras = available
+                        .Where(r => !offered.Contains(r))
+                        .OrderBy(_ => UnityEngine.Random.value)
+                        .Take(3 - offered.Count);
+                    offered.AddRange(extras);
+                }
+
+                // Shuffle so the faction roles aren't always in the same position
+                state.OfferedRoles = offered.OrderBy(_ => UnityEngine.Random.value).ToList();
+            }
+
             DraftNetworkHelper.SendTurnAnnouncement(state.SlotNumber, state.PlayerId, state.OfferedRoles, CurrentTurn);
         }
 
@@ -147,9 +213,9 @@ namespace DraftModeTOUM.Managers
         {
             if (!AmongUsClient.Instance.AmHost || !IsDraftActive) return false;
             var state = GetCurrentPickerState();
-
             if (state == null || state.PlayerId != playerId || state.HasPicked) return false;
 
+            // Option 4 (index 3) = random, still respects faction caps
             string chosenRole = (choiceIndex == 3 || choiceIndex >= state.OfferedRoles.Count)
                 ? PickFullRandom()
                 : state.OfferedRoles[choiceIndex];
@@ -162,8 +228,10 @@ namespace DraftModeTOUM.Managers
 
         private static string PickFullRandom()
         {
-            var available = _lobbyRolePool.Where(r => !_draftedRoles.Contains(r)).ToList();
-            return available.Count > 0 ? available[UnityEngine.Random.Range(0, available.Count)] : "Crewmate";
+            var available = GetAvailableRoles();
+            return available.Count > 0
+                ? available[UnityEngine.Random.Range(0, available.Count)]
+                : "Crewmate";
         }
 
         private static void FinalisePickForCurrentSlot(string roleName)
@@ -175,6 +243,15 @@ namespace DraftModeTOUM.Managers
             state.HasPicked = true;
             state.IsPickingNow = false;
             _draftedRoles.Add(roleName);
+
+            // Update faction counters
+            var faction = RoleCategory.GetFaction(roleName);
+            if (faction == RoleFaction.Impostor) _impostorsDrafted++;
+            else if (faction == RoleFaction.Neutral) _neutralsDrafted++;
+
+            DraftModePlugin.Logger.LogInfo(
+                $"[DraftManager] '{roleName}' drafted ({faction}). " +
+                $"Impostors: {_impostorsDrafted}/{MaxImpostors}, Neutrals: {_neutralsDrafted}/{MaxNeutrals}");
 
             CurrentTurn++;
             if (CurrentTurn > TurnOrder.Count)
@@ -200,8 +277,14 @@ namespace DraftModeTOUM.Managers
             sb.AppendLine("<color=#FFD700><b>── DRAFT RECAP ──</b></color>");
             foreach (var slot in TurnOrder)
             {
-                var state = GetStateForSlot(slot);
-                sb.AppendLine($"Player {state.SlotNumber}: <color=#4BD7E4>{state.ChosenRole}</color>");
+                var s = GetStateForSlot(slot);
+                string color = RoleCategory.GetFaction(s.ChosenRole) switch
+                {
+                    RoleFaction.Impostor => "#FF4444",
+                    RoleFaction.Neutral => "#AA44FF",
+                    _ => "#4BD7E4"
+                };
+                sb.AppendLine($"Player {s.SlotNumber}: <color={color}>{s.ChosenRole}</color>");
             }
             return sb.ToString();
         }
@@ -211,8 +294,10 @@ namespace DraftModeTOUM.Managers
             foreach (var state in _slotMap.Values)
             {
                 if (state.PlayerId >= 200) continue;
-                var p = PlayerControl.AllPlayerControls.ToArray().FirstOrDefault(x => x.PlayerId == state.PlayerId);
-                if (p != null) UpCommandRequests.SetRequest(p.Data.PlayerName, state.ChosenRole);
+                var p = PlayerControl.AllPlayerControls.ToArray()
+                    .FirstOrDefault(x => x.PlayerId == state.PlayerId);
+                if (p != null)
+                    UpCommandRequests.SetRequest(p.Data.PlayerName, state.ChosenRole);
             }
         }
 
