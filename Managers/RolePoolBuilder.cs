@@ -1,102 +1,105 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
-using BepInEx.Configuration;
-using TownOfUs.LocalSettings.Attributes; 
+using AmongUs.GameOptions;
+using MiraAPI.Roles;
+using MiraAPI.Utilities;
+using TownOfUs.Utilities;
 
 namespace DraftModeTOUM.Managers
 {
+    public sealed class DraftRolePool
+    {
+        public List<string> Roles { get; } = new List<string>();
+        public Dictionary<string, int> MaxCounts { get; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, int> Weights { get; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, RoleFaction> Factions { get; } = new Dictionary<string, RoleFaction>(StringComparer.OrdinalIgnoreCase);
+    }
+
     public static class RolePoolBuilder
     {
-        public static List<string> BuildPool()
+        public static DraftRolePool BuildPool()
         {
-            var enabledRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var pool = new DraftRolePool();
 
             try
             {
-                ReadFromLocalSettings(enabledRoles);
+                BuildFromRoleOptions(pool);
             }
             catch (Exception ex)
             {
                 DraftModePlugin.Logger.LogWarning(
-                    $"[RolePoolBuilder] Failed reading LocalSettings: {ex.Message}");
+                    $"[RolePoolBuilder] Failed reading role options: {ex.Message}");
             }
 
-            if (enabledRoles.Count == 0)
+            if (pool.Roles.Count == 0)
             {
                 DraftModePlugin.Logger.LogWarning(
-                    "[RolePoolBuilder] No enabled roles detected — using full role list");
+                    "[RolePoolBuilder] No enabled roles detected — using fallback role list");
 
-                return GetAllRoles()
-                    .OrderBy(_ => UnityEngine.Random.value)
-                    .ToList();
+                foreach (var roleName in GetAllRoles())
+                {
+                    AddRole(pool, roleName, 1, 100, RoleCategory.GetFaction(roleName));
+                }
             }
 
             DraftModePlugin.Logger.LogInfo(
-                $"[RolePoolBuilder] Found {enabledRoles.Count} enabled roles");
+                $"[RolePoolBuilder] Found {pool.Roles.Count} enabled roles");
 
-            return enabledRoles
-                .OrderBy(_ => UnityEngine.Random.value)
-                .ToList();
+            return pool;
         }
 
-        private static void ReadFromLocalSettings(HashSet<string> result)
+        private static void BuildFromRoleOptions(DraftRolePool pool)
         {
-            var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+            var roleOptions = GameOptionsManager.Instance?.CurrentGameOptions?.RoleOptions;
+            if (roleOptions == null) return;
 
-            foreach (var asm in assemblies)
+            var roles = MiscUtils.AllRegisteredRoles.ToArray();
+
+            foreach (var role in roles)
             {
+                if (role == null) continue;
+                if (!CustomRoleUtils.CanSpawnOnCurrentMode(role)) continue;
+                if (role.Role is RoleTypes.CrewmateGhost or RoleTypes.ImpostorGhost or RoleTypes.GuardianAngel) continue;
 
-                if (!asm.GetName().Name.Contains("TownOfUs"))
-                    continue;
-
-                foreach (var type in asm.GetTypes())
+                if (role is ICustomRole customRole)
                 {
-
-                    if (type.Namespace == null || !type.Namespace.StartsWith("TownOfUs.LocalSettings"))
+                    if (customRole.Configuration.HideSettings || !customRole.VisibleInSettings())
                         continue;
-
-                    ReadSettingsFromType(type, result);
                 }
+
+                int count = roleOptions.GetNumPerGame(role.Role);
+                int chance = roleOptions.GetChancePerGame(role.Role);
+                if (count <= 0 || chance <= 0) continue;
+
+                var roleName = role.GetRoleName();
+                var faction = role.IsImpostor()
+                    ? RoleFaction.Impostor
+                    : (role.IsNeutral() ? RoleFaction.Neutral : RoleFaction.Crewmate);
+
+                AddRole(pool, roleName, count, chance, faction);
             }
         }
 
-        private static void ReadSettingsFromType(Type type, HashSet<string> result)
+        private static void AddRole(DraftRolePool pool, string roleName, int maxCount, int weight, RoleFaction faction)
         {
-            var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Static);
-
-            foreach (var prop in properties)
+            if (string.IsNullOrWhiteSpace(roleName)) return;
+            if (!pool.MaxCounts.ContainsKey(roleName))
             {
-
-                var attr = prop.GetCustomAttribute<LocalizedLocalNumberSettingAttribute>();
-                if (attr == null) continue;
-
-
-                var configBase = prop.GetValue(null) as ConfigEntryBase;
-                if (configBase == null) continue;
-
-
-                float value = Convert.ToSingle(configBase.BoxedValue);
-
-                if (value > 0)
-                {
-                    var roleName = prop.Name;
-
-
-                    if (roleName.EndsWith("Count", StringComparison.OrdinalIgnoreCase))
-                    {
-                        roleName = roleName.Substring(0, roleName.Length - 5);
-                    }
-
-                    result.Add(roleName);
-                }
+                pool.Roles.Add(roleName);
+                pool.MaxCounts[roleName] = Math.Max(1, maxCount);
+                pool.Weights[roleName] = Math.Max(1, weight);
+                pool.Factions[roleName] = faction;
+            }
+            else
+            {
+                pool.MaxCounts[roleName] = Math.Max(pool.MaxCounts[roleName], maxCount);
+                pool.Weights[roleName] = Math.Max(pool.Weights[roleName], weight);
             }
         }
 
         private static IEnumerable<string> GetAllRoles()
         {
-
             return new[]
             {
                 "Aurial","Forensic","Lookout","Mystic","Seer",
@@ -109,7 +112,7 @@ namespace DraftModeTOUM.Managers
                 "Scavenger","Warlock", "Ambassador","Puppeteer","Spellslinger",
                 "Blackmailer","Hypnotist","Janitor","Miner","Undertaker",
                 "Fairy","Mercenary","Survivor", "Doomsayer","Executioner","Jester",
-                 "Arsonist","Glitch","Juggernaut","Plaguebearer",
+                "Arsonist","Glitch","Juggernaut","Plaguebearer",
                 "SoulCollector","Vampire","Werewolf", "Chef","Inquisitor"
             };
         }

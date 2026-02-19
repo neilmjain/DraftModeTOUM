@@ -37,12 +37,20 @@ namespace DraftModeTOUM.Managers
 
         public static RoleFaction GetFaction(string roleName)
         {
-            if (ImpostorRoles.Contains(roleName)) return RoleFaction.Impostor;
-            if (NeutralRoles.Contains(roleName)) return RoleFaction.Neutral;
+            var normalized = Normalize(roleName);
+            if (ImpostorRoles.Contains(normalized)) return RoleFaction.Impostor;
+            if (NeutralRoles.Contains(normalized)) return RoleFaction.Neutral;
             return RoleFaction.Crewmate;
         }
 
-        public static bool IsImpostor(string roleName) => ImpostorRoles.Contains(roleName);
-        public static bool IsNeutral(string roleName) => NeutralRoles.Contains(roleName);
+        public static bool IsImpostor(string roleName) => ImpostorRoles.Contains(Normalize(roleName));
+        public static bool IsNeutral(string roleName) => NeutralRoles.Contains(Normalize(roleName));
+
+        private static string Normalize(string roleName)
+        {
+            return (roleName ?? string.Empty)
+                .Replace(" ", string.Empty)
+                .Replace("-", string.Empty);
+        }
     }
 }
