@@ -4,6 +4,17 @@ A [BepInEx](https://github.com/BepInEx/BepInEx) mod for **Among Us** running [To
 
 ---
 
+## ⚠️ Required Lobby Setup
+
+Before starting a draft the host **must** configure two settings or roles will not assign correctly:
+
+1. **In the TOUM settings page** — set **Role Assignment** to `Vanilla`
+2. **In the regular Among Us settings** — set **Number of Impostors** to `2`
+
+Without these the draft will run but the game will override or conflict with the assigned roles.
+
+---
+
 ## Requirements
 
 - Among Us (compatible version with TOUM)
