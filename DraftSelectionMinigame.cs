@@ -28,15 +28,15 @@ public sealed class DraftSelectionMinigame : Minigame
     public GameObject?     WarpRing;
     public TextMeshPro?    TurnListText;
 
-    // Matches Ambassador's static card-tracking pattern exactly
+    // Static card-tracking (same pattern as AmbassadorSelectionMinigame)
     public static int CurrentCard { get; set; }
     public static int RoleCount   { get; set; }
 
     private readonly Color _bgColor = new Color32(24, 0, 0, 215);
 
-    // Managed-only — IL2CPP cannot see private fields so no attribute needed
+    // Private managed state — IL2CPP never sees private fields directly
     private List<DraftRoleCard>? _cards;
-    private Action<int>?          _onPick;
+    private Action<int>?         _onPick;
 
     public DraftSelectionMinigame(IntPtr cppPtr) : base(cppPtr) { }
 
@@ -74,18 +74,18 @@ public sealed class DraftSelectionMinigame : Minigame
         RedRing.SetActive(false);
         WarpRing.SetActive(false);
 
-        // Turn order panel (left side)
+        // Turn-order panel (left side)
         var listGo = new GameObject("DraftTurnList");
         listGo.transform.SetParent(transform, false);
         listGo.transform.localPosition = new Vector3(-4.2f, 1.8f, -1f);
 
         TurnListText = listGo.AddComponent<TextMeshPro>();
-        TurnListText.font              = font;
-        TurnListText.fontMaterial      = fontMat;
-        TurnListText.fontSize          = 1.5f;
-        TurnListText.alignment         = TextAlignmentOptions.TopLeft;
+        TurnListText.font               = font;
+        TurnListText.fontMaterial       = fontMat;
+        TurnListText.fontSize           = 1.5f;
+        TurnListText.alignment          = TextAlignmentOptions.TopLeft;
         TurnListText.enableWordWrapping = false;
-        TurnListText.text              = "";
+        TurnListText.text               = "";
         TurnListText.gameObject.SetActive(false);
 
         DraftModePlugin.Logger.LogInfo("[DraftSelectionMinigame] Awake() completed.");
@@ -96,7 +96,8 @@ public sealed class DraftSelectionMinigame : Minigame
     {
         DraftModePlugin.Logger.LogInfo("[DraftSelectionMinigame] Create() called.");
         var go = Instantiate(TouAssets.AltRoleSelectionGame.LoadAsset(), HudManager.Instance.transform);
-        go.GetComponent<Minigame>().DestroyImmediate();
+        // DestroyImmediate requires the component object, not zero arguments
+        UnityEngine.Object.DestroyImmediate(go.GetComponent<Minigame>());
         go.SetActive(false);
         var result = go.AddComponent<DraftSelectionMinigame>();
         DraftModePlugin.Logger.LogInfo("[DraftSelectionMinigame] Create() complete.");
@@ -107,10 +108,10 @@ public sealed class DraftSelectionMinigame : Minigame
     public void Open(List<DraftRoleCard> cards, Action<int> onPick)
     {
         DraftModePlugin.Logger.LogInfo($"[DraftSelectionMinigame] Open() called with {cards.Count} cards.");
-        _cards  = cards;
-        _onPick = onPick;
-        // RoleCount includes the Random option (+1), matching Ambassador
-        RoleCount = cards.Count + 1;
+        _cards    = cards;
+        _onPick   = onPick;
+        RoleCount = cards.Count + 1; // +1 for the Random card
+        CurrentCard = 0;
         Coroutines.Start(CoOpen(this));
     }
 
@@ -144,14 +145,12 @@ public sealed class DraftSelectionMinigame : Minigame
 
         int mySlot = Managers.DraftManager.GetSlotForPlayer(PlayerControl.LocalPlayer.PlayerId);
         if (mySlot > 0)
-            sb.AppendLine($"<color=#00FFFF><b>You are Player #{mySlot}</b></color>\n");
+            sb.AppendLine($"<color=#00FFFF><b>You are Pick #{mySlot}</b></color>\n");
 
         sb.AppendLine("<b>── Draft Order ──</b>");
 
-        var order = Managers.DraftManager.TurnOrder;
-        for (int i = 0; i < order.Count; i++)
+        foreach (int slot in Managers.DraftManager.TurnOrder)
         {
-            int slot  = order[i];
             var state = Managers.DraftManager.GetStateForSlot(slot);
             if (state == null) continue;
 
@@ -163,12 +162,11 @@ public sealed class DraftSelectionMinigame : Minigame
             else if (state.IsPickingNow) { label = "<b>(Picking)</b>"; color = "#FFD700"; }
             else                         { label = "(Waiting)";        color = "#AAAAAA"; }
 
-            sb.AppendLine($"<color={color}>Player {slot}... {label}{me}</color>");
+            sb.AppendLine($"<color={color}>Pick {slot}... {label}{me}</color>");
         }
         return sb.ToString();
     }
 
-    // Mirrors AmbassadorSelectionMinigame.Begin() exactly
     private void Begin()
     {
         DraftModePlugin.Logger.LogInfo("[DraftSelectionMinigame] Begin() called.");
@@ -180,20 +178,20 @@ public sealed class DraftSelectionMinigame : Minigame
         RoleIcon!.gameObject.SetActive(true);
         RedRing!.SetActive(true);
         WarpRing!.SetActive(true);
-        RoleIcon.SetSizeLimit(2.8f);
+        // Scale the icon manually — SetSizeLimit is a TOU-Mira internal, use localScale instead
+        RoleIcon.transform.localScale = Vector3.one * 0.35f;
 
         TurnListText!.gameObject.SetActive(true);
         RefreshTurnList();
 
-        // Create a card for each offered role
         if (_cards != null)
         {
             foreach (var card in _cards)
             {
-                var btn = CreateCard(card.RoleName, card.TeamName, card.Icon, card.Color);
+                var btn           = CreateCard(card.RoleName, card.TeamName, card.Icon, card.Color);
                 int capturedIndex = card.Index;
                 btn.OnClick.RemoveAllListeners();
-                btn.OnClick.AddListener((UnityAction)(() =>
+                btn.OnClick.AddListener(new Action(() =>
                 {
                     _onPick?.Invoke(capturedIndex);
                     Close();
@@ -201,10 +199,10 @@ public sealed class DraftSelectionMinigame : Minigame
             }
         }
 
-        // Random card — index 3, matching BuildCards convention
+        // Random card — always last
         var randomBtn = CreateCard("Random", "Random", TouRoleIcons.RandomAny.LoadAsset(), Color.white);
         randomBtn.OnClick.RemoveAllListeners();
-        randomBtn.OnClick.AddListener((UnityAction)(() =>
+        randomBtn.OnClick.AddListener(new Action(() =>
         {
             _onPick?.Invoke(3);
             Close();
@@ -216,7 +214,6 @@ public sealed class DraftSelectionMinigame : Minigame
         DraftModePlugin.Logger.LogInfo("[DraftSelectionMinigame] Begin() complete.");
     }
 
-    // Mirrors AmbassadorSelectionMinigame.CreateCard() exactly
     private PassiveButton CreateCard(string roleName, string teamName, Sprite? icon, Color color)
     {
         var newRoleObj    = Instantiate(RolePrefab, RolesHolder);
@@ -230,27 +227,28 @@ public sealed class DraftSelectionMinigame : Minigame
 
         selection.SetActive(false);
 
-        passiveButton.OnMouseOver.AddListener((UnityAction)(() =>
+        passiveButton.OnMouseOver.AddListener(new Action(() =>
         {
             selection.SetActive(true);
             RoleName!.text = roleName;
             RoleTeam!.text = teamName;
             if (icon != null) RoleIcon!.sprite = icon;
-            RoleIcon!.SetSizeLimit(2.8f);
+            RoleIcon!.transform.localScale = Vector3.one * 0.35f;
         }));
-        passiveButton.OnMouseOut.AddListener((UnityAction)(() => selection.SetActive(false)));
+        passiveButton.OnMouseOut.AddListener(new Action(() => selection.SetActive(false)));
 
         float angle = (2 * Mathf.PI / RoleCount) * CurrentCard;
-        float x = 1.9f * Mathf.Cos(angle);
-        float y = 0.1f + 1.9f * Mathf.Sin(angle);
+        float x     = 1.9f * Mathf.Cos(angle);
+        float y     = 0.1f + 1.9f * Mathf.Sin(angle);
 
         newRoleObj.transform.localPosition = new Vector3(x, y, -1f);
         newRoleObj.name = roleName + " DraftSelection";
 
-        roleText.text  = roleName;
-        teamText.text  = teamName;
+        roleText.text    = roleName;
+        teamText.text    = teamName;
         roleImage.sprite = icon ?? TouRoleIcons.RandomAny.LoadAsset();
-        roleImage.SetSizeLimit(2.8f);
+        // Scale image manually instead of SetSizeLimit
+        roleImage.transform.localScale = Vector3.one * 0.4f;
 
         rollover.OverColor = color;
         roleText.color     = color;
@@ -261,20 +259,49 @@ public sealed class DraftSelectionMinigame : Minigame
         return passiveButton;
     }
 
-    // Mirrors AmbassadorSelectionMinigame.CoAnimateCards()
     [HideFromIl2Cpp]
     private IEnumerator CoAnimateCards()
     {
-        foreach (var o in RolesHolder!.transform)
+        if (RolesHolder == null) yield break;
+
+        // Simple pop-in animation — replaces MiscUtils.BetterBloop (TOU-Mira internal)
+        foreach (var o in RolesHolder.transform)
         {
             var card = o.Cast<Transform>();
             if (card == null) continue;
             var child = card.GetChild(0);
-            Coroutines.Start(MiscUtils.BetterBloop(child, finalSize: 0.5f - (RoleCount * 0.0075f), duration: 0.1f, intensity: 0.11f));
+            Coroutines.Start(CoPopIn(child));
             yield return new WaitForSeconds(0.01f);
         }
+
         CurrentCard = -1;
         RoleCount   = -1;
+    }
+
+    // Simple scale pop-in replacing BetterBloop
+    private static IEnumerator CoPopIn(Transform t)
+    {
+        float targetScale = 0.5f;
+        float duration    = 0.12f;
+        t.localScale      = Vector3.zero;
+
+        for (float timer = 0f; timer < duration; timer += Time.deltaTime)
+        {
+            float progress  = timer / duration;
+            // Overshoot slightly then settle
+            float scale     = Mathf.LerpUnclamped(0f, targetScale, EaseOutBack(progress));
+            t.localScale    = Vector3.one * scale;
+            yield return null;
+        }
+
+        t.localScale = Vector3.one * targetScale;
+    }
+
+    private static float EaseOutBack(float t)
+    {
+        const float c1 = 1.70158f;
+        const float c3 = c1 + 1f;
+        return 1f + c3 * Mathf.Pow(t - 1f, 3f) + c1 * Mathf.Pow(t - 1f, 2f);
     }
 }
 

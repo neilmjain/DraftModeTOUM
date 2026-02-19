@@ -24,6 +24,10 @@ namespace DraftModeTOUM.Managers
                 DraftModePlugin.Logger.LogError("[DraftUiManager] Cannot show picker — minigame failed to create.");
                 return;
             }
+
+            // Hide the status overlay while the full picker wheel is open
+            DraftStatusOverlay.Hide();
+
             var cards = BuildCards(roles);
             _minigame.Open(cards, OnPickSelected);
         }
@@ -44,17 +48,19 @@ namespace DraftModeTOUM.Managers
                 if (_minigame.gameObject != null && _minigame.gameObject.activeSelf)
                     _minigame.Close();
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
                 DraftModePlugin.Logger.LogWarning($"[DraftUiManager] CloseAll exception (safe to ignore): {ex.Message}");
             }
-            // Always null the reference so EnsureMinigame recreates it next time
             _minigame = null;
+
+            // Restore the status overlay once the picker wheel closes
+            if (DraftManager.IsDraftActive)
+                DraftStatusOverlay.Show();
         }
 
         private static void EnsureMinigame()
         {
-            // Treat destroyed Unity objects as null
             if (_minigame != null)
             {
                 bool destroyed = false;
@@ -67,7 +73,7 @@ namespace DraftModeTOUM.Managers
             {
                 _minigame = DraftSelectionMinigame.Create();
                 if (_minigame == null)
-                    DraftModePlugin.Logger.LogError("[DraftUiManager] DraftSelectionMinigame.Create() returned null — asset may not be loaded!");
+                    DraftModePlugin.Logger.LogError("[DraftUiManager] DraftSelectionMinigame.Create() returned null!");
             }
         }
 
@@ -83,13 +89,14 @@ namespace DraftModeTOUM.Managers
             for (int i = 0; i < roles.Count; i++)
             {
                 string roleName = roles[i];
-                var role  = FindRoleByName(roleName);
-                string teamName = role != null ? MiscUtils.GetParsedRoleAlignment(role) : "Unknown";
-                var icon  = GetRoleIcon(role);
-                var color = GetRoleColor(role);
-                cards.Add(new DraftRoleCard(roleName, teamName, icon, color, i));
+                var role     = FindRoleByName(roleName);
+                string team  = role != null ? MiscUtils.GetParsedRoleAlignment(role) : "Unknown";
+                var icon     = GetRoleIcon(role);
+                var color    = GetRoleColor(role);
+                cards.Add(new DraftRoleCard(roleName, team, icon, color, i));
             }
 
+            // Random card always last at index 3
             cards.Add(new DraftRoleCard("Random", "Random", TouRoleIcons.RandomAny.LoadAsset(), Color.white, 3));
             return cards;
         }
@@ -104,8 +111,8 @@ namespace DraftModeTOUM.Managers
 
         private static Sprite? GetRoleIcon(RoleBehaviour? role)
         {
-            if (role is ICustomRole customRole && customRole.Configuration.Icon != null)
-                return customRole.Configuration.Icon.LoadAsset();
+            if (role is ICustomRole cr && cr.Configuration.Icon != null)
+                return cr.Configuration.Icon.LoadAsset();
             if (role?.RoleIconSolid != null)
                 return role.RoleIconSolid;
             return TouRoleIcons.RandomAny.LoadAsset();
@@ -113,11 +120,11 @@ namespace DraftModeTOUM.Managers
 
         private static Color GetRoleColor(RoleBehaviour? role)
         {
-            if (role is ICustomRole customRole) return customRole.RoleColor;
+            if (role is ICustomRole cr) return cr.RoleColor;
             return role != null ? role.TeamColor : Color.white;
         }
 
-        private static string Normalize(string roleName) =>
-            (roleName ?? string.Empty).ToLowerInvariant().Replace(" ", string.Empty).Replace("-", string.Empty);
+        private static string Normalize(string s) =>
+            (s ?? string.Empty).ToLowerInvariant().Replace(" ", "").Replace("-", "");
     }
 }

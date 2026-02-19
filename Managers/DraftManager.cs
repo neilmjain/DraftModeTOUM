@@ -93,6 +93,9 @@ namespace DraftModeTOUM.Managers
             TurnOrder = _slotMap.Keys.OrderBy(s => s).ToList();
             CurrentTurn = 1;
             TurnTimeLeft = TurnDuration;
+
+            // Show the center-screen overlay on all clients
+            DraftStatusOverlay.Show();
         }
 
         public static void StartDraft()
@@ -143,6 +146,9 @@ namespace DraftModeTOUM.Managers
             // Tell each real player their slot number privately
             NotifyPlayersOfSlots();
 
+            // Show the center-screen status overlay for the host
+            DraftStatusOverlay.Show();
+
             OfferRolesToCurrentPicker();
         }
 
@@ -159,6 +165,7 @@ namespace DraftModeTOUM.Managers
             CurrentTurn = 0;
             TurnTimeLeft = 0f;
             DraftUiManager.CloseAll();
+            DraftStatusOverlay.Hide();
             _slotMap.Clear();
             _pidToSlot.Clear();
             _lobbyRolePool.Clear();

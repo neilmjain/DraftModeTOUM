@@ -36,7 +36,8 @@ namespace DraftModeTOUM
             {
                 ClassInjector.RegisterTypeInIl2Cpp<DraftTicker>();
                 ClassInjector.RegisterTypeInIl2Cpp<DraftSelectionMinigame>();
-                Logger.LogInfo("DraftTicker + DraftSelectionMinigame registered successfully.");
+                ClassInjector.RegisterTypeInIl2Cpp<DraftStatusOverlay>();
+                Logger.LogInfo("DraftTicker + DraftSelectionMinigame + DraftStatusOverlay registered successfully.");
             }
             catch (System.Exception ex)
             {
