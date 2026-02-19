@@ -1,9 +1,9 @@
 ﻿using BepInEx;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
-using BepInEx.Unity.IL2CPP.Utils;
 using HarmonyLib;
 using Il2CppInterop.Runtime.Injection;
+using DraftModeTOUM.Patches;
 using UnityEngine;
 
 namespace DraftModeTOUM
@@ -34,6 +34,9 @@ namespace DraftModeTOUM
             _harmony = new Harmony(PluginInfo.PLUGIN_GUID);
             _harmony.PatchAll();
 
+            // Manually patch internal TOUM class + OnPlayerJoined rejoin guard
+            RequireModPatch.Apply(_harmony);
+
             Logger.LogInfo("DraftModeTOUM loaded successfully!");
         }
 
@@ -48,6 +51,18 @@ namespace DraftModeTOUM
     {
         public const string PLUGIN_GUID = "com.draftmodetoun.mod";
         public const string PLUGIN_NAME = "DraftModeTOUM";
-        public const string PLUGIN_VERSION = "1.0.0";
+        public const string PLUGIN_VERSION = "1.0.3";
+    }
+
+    // Clear kicked/verified lists when the host disconnects from a lobby
+    [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnDisconnected))]
+    public static class OnDisconnectPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix()
+        {
+            RequireModPatch.ClearSession();
+            DraftModePlugin.Logger.LogInfo("[DraftModePlugin] Session cleared on disconnect.");
+        }
     }
 }
