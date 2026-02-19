@@ -37,70 +37,87 @@ public sealed class DraftSelectionMinigame : Minigame
 
     private void Awake()
     {
-        if (Instance) Instance.Close();
+        DraftModePlugin.Logger.LogInfo("[DraftSelectionMinigame] Awake() called.");
+        try
+        {
+            if (Instance) Instance.Close();
 
-        RolesHolder = transform.FindChild("Roles");
-        RolePrefab  = transform.FindChild("RoleCardHolder").gameObject;
+            RolesHolder = transform.FindChild("Roles");
+            RolePrefab  = transform.FindChild("RoleCardHolder").gameObject;
 
-        var status = transform.FindChild("Status");
-        StatusText = status.gameObject.GetComponent<TextMeshPro>();
-        RoleName   = status.FindChild("RoleName").gameObject.GetComponent<TextMeshPro>();
-        RoleTeam   = status.FindChild("RoleTeam").gameObject.GetComponent<TextMeshPro>();
-        RoleIcon   = status.FindChild("RoleImage").gameObject.GetComponent<SpriteRenderer>();
-        RedRing    = status.FindChild("RoleRing").gameObject;
-        WarpRing   = status.FindChild("RingWarp").gameObject;
+            var status = transform.FindChild("Status");
+            StatusText = status.gameObject.GetComponent<TextMeshPro>();
+            RoleName   = status.FindChild("RoleName").gameObject.GetComponent<TextMeshPro>();
+            RoleTeam   = status.FindChild("RoleTeam").gameObject.GetComponent<TextMeshPro>();
+            RoleIcon   = status.FindChild("RoleImage").gameObject.GetComponent<SpriteRenderer>();
+            RedRing    = status.FindChild("RoleRing").gameObject;
+            WarpRing   = status.FindChild("RingWarp").gameObject;
 
-        var font    = HudManager.Instance.TaskPanel.taskText.font;
-        var fontMat = HudManager.Instance.TaskPanel.taskText.fontMaterial;
+            var font    = HudManager.Instance.TaskPanel.taskText.font;
+            var fontMat = HudManager.Instance.TaskPanel.taskText.fontMaterial;
 
-        StatusText.font = font; StatusText.fontMaterial = fontMat;
-        StatusText.text = "Draft Pick";
-        StatusText.gameObject.SetActive(false);
+            StatusText.font = font; StatusText.fontMaterial = fontMat;
+            StatusText.text = "Draft Pick";
+            StatusText.gameObject.SetActive(false);
 
-        RoleName.font = font; RoleName.fontMaterial = fontMat;
-        RoleName.text = " "; RoleName.gameObject.SetActive(false);
+            RoleName.font = font; RoleName.fontMaterial = fontMat;
+            RoleName.text = " "; RoleName.gameObject.SetActive(false);
 
-        RoleTeam.font = font; RoleTeam.fontMaterial = fontMat;
-        RoleTeam.text = " "; RoleTeam.gameObject.SetActive(false);
+            RoleTeam.font = font; RoleTeam.fontMaterial = fontMat;
+            RoleTeam.text = " "; RoleTeam.gameObject.SetActive(false);
 
-        RoleIcon.sprite = TouRoleIcons.RandomAny.LoadAsset();
-        RoleIcon.gameObject.SetActive(false);
-        RedRing.SetActive(false);
-        WarpRing.SetActive(false);
+            RoleIcon.sprite = TouRoleIcons.RandomAny.LoadAsset();
+            RoleIcon.gameObject.SetActive(false);
+            RedRing.SetActive(false);
+            WarpRing.SetActive(false);
 
-        // Left-side turn order panel
-        var listGo = new GameObject("DraftTurnList");
-        listGo.transform.SetParent(transform, false);
-        listGo.transform.localPosition = new Vector3(-4.2f, 1.8f, -1f);
+            // Left-side turn order panel
+            var listGo = new GameObject("DraftTurnList");
+            listGo.transform.SetParent(transform, false);
+            listGo.transform.localPosition = new Vector3(-4.2f, 1.8f, -1f);
 
-        TurnListText = listGo.AddComponent<TextMeshPro>();
-        TurnListText.font               = font;
-        TurnListText.fontMaterial       = fontMat;
-        TurnListText.fontSize           = 1.5f;
-        TurnListText.alignment          = TextAlignmentOptions.TopLeft;
-        TurnListText.enableWordWrapping  = false;
-        TurnListText.text               = "";
-        TurnListText.gameObject.SetActive(false);
+            TurnListText = listGo.AddComponent<TextMeshPro>();
+            TurnListText.font               = font;
+            TurnListText.fontMaterial       = fontMat;
+            TurnListText.fontSize           = 1.5f;
+            TurnListText.alignment          = TextAlignmentOptions.TopLeft;
+            TurnListText.enableWordWrapping  = false;
+            TurnListText.text               = "";
+            TurnListText.gameObject.SetActive(false);
+            DraftModePlugin.Logger.LogInfo("[DraftSelectionMinigame] Awake() completed successfully.");
+        }
+        catch (System.Exception ex)
+        {
+            DraftModePlugin.Logger.LogError($"[DraftSelectionMinigame] Awake() EXCEPTION: {ex}");
+        }
     }
 
     public static DraftSelectionMinigame? Create()
     {
+        DraftModePlugin.Logger.LogInfo("[DraftSelectionMinigame] Create() called.");
         var prefab = TouAssets.AltRoleSelectionGame.LoadAsset();
         if (prefab == null)
         {
             DraftModePlugin.Logger.LogError("[DraftSelectionMinigame] TouAssets.AltRoleSelectionGame.LoadAsset() returned null — asset bundle not ready yet!");
             return null;
         }
+        DraftModePlugin.Logger.LogInfo("[DraftSelectionMinigame] Prefab loaded OK.");
         if (HudManager.Instance == null)
         {
             DraftModePlugin.Logger.LogError("[DraftSelectionMinigame] HudManager.Instance is null — cannot create minigame.");
             return null;
         }
         var go = Instantiate(prefab, HudManager.Instance.transform);
+        DraftModePlugin.Logger.LogInfo("[DraftSelectionMinigame] Instantiated prefab GO.");
         var existing = go.GetComponent<Minigame>();
         if (existing != null) UnityEngine.Object.DestroyImmediate(existing);
-        go.SetActive(false);
-        return go.AddComponent<DraftSelectionMinigame>();
+        // Do NOT SetActive(false) before AddComponent — Awake() must fire immediately
+        // while HudManager is still valid. We deactivate AFTER Awake() runs.
+        DraftModePlugin.Logger.LogInfo("[DraftSelectionMinigame] Adding DraftSelectionMinigame component...");
+        var result = go.AddComponent<DraftSelectionMinigame>();
+        DraftModePlugin.Logger.LogInfo($"[DraftSelectionMinigame] AddComponent result: {(result == null ? "NULL" : "OK")}");
+        go.SetActive(false); // Hide after Awake() has safely wired up all fields
+        return result;
     }
 
     [HideFromIl2Cpp]
@@ -184,8 +201,10 @@ public sealed class DraftSelectionMinigame : Minigame
             foreach (var card in _cards)
                 CreateCard(card);
 
+        DraftModePlugin.Logger.LogInfo("[DraftSelectionMinigame] Calling MinigameStubs.Begin...");
         TransType = TransitionType.None;
         MinigameStubs.Begin(this, null);
+        DraftModePlugin.Logger.LogInfo("[DraftSelectionMinigame] Begin() complete.");
     }
 
     private void ClearCards()

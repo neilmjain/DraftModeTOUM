@@ -16,6 +16,7 @@ namespace DraftModeTOUM.Managers
 
         public static void ShowPicker(List<string> roles)
         {
+            DraftModePlugin.Logger.LogInfo($"[DraftUiManager] ShowPicker called. HudManager={HudManager.Instance != null}, roles={roles?.Count ?? -1}");
             if (HudManager.Instance == null || roles == null || roles.Count == 0) return;
 
             EnsureMinigame();
@@ -24,8 +25,10 @@ namespace DraftModeTOUM.Managers
                 DraftModePlugin.Logger.LogError("[DraftUiManager] Cannot show picker — minigame failed to create.");
                 return;
             }
+            DraftModePlugin.Logger.LogInfo("[DraftUiManager] Calling minigame.Open...");
             var cards = BuildCards(roles);
             _minigame.Open(cards, OnPickSelected);
+            DraftModePlugin.Logger.LogInfo("[DraftUiManager] minigame.Open() returned.");
         }
 
         // Called whenever turn state changes so non-pickers still see updated list

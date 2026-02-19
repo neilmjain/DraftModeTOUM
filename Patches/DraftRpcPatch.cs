@@ -177,6 +177,7 @@ namespace DraftModeTOUM.Patches
 
         public static void SendTurnAnnouncement(int slot, byte playerId, List<string> roles, int turnNumber)
         {
+            DraftModePlugin.Logger.LogInfo($"[DraftNetworkHelper] SendTurnAnnouncement: slot={slot}, picker={playerId}, localPlayer={PlayerControl.LocalPlayer?.PlayerId}, roles={string.Join(",", roles)}");
             DraftRpcPatch.HandleAnnounceTurnLocal(slot, playerId, roles);
 
             var writer = AmongUsClient.Instance.StartRpcImmediately(
