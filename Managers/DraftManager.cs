@@ -27,6 +27,8 @@ namespace DraftModeTOUM.Managers
         public static float TurnTimeLeft { get; private set; }
         public static float TurnDuration { get; set; } = 10f;
 
+        public static bool ShowRecap { get; set; } = true;
+
         private static bool _soloTestMode = false;
         public static List<int> TurnOrder { get; private set; } = new List<int>();
         private static Dictionary<int, PlayerDraftState> _slotMap = new Dictionary<int, PlayerDraftState>();
@@ -179,7 +181,11 @@ namespace DraftModeTOUM.Managers
             {
                 IsDraftActive = false;
                 ApplyAllRoles();
-                DraftNetworkHelper.BroadcastRecap(BuildRecapMessage());
+
+                if (ShowRecap)
+                    DraftNetworkHelper.BroadcastRecap(BuildRecapMessage());
+                else
+                    DraftNetworkHelper.BroadcastRecap("<color=#FFD700><b>── DRAFT COMPLETE ──</b></color>");
             }
             else
             {

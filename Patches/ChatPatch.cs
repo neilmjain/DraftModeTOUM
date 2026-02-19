@@ -15,7 +15,8 @@ namespace DraftModeTOUM.Patches
             string msg = __instance.freeChatField.textArea.text.Trim();
             if (string.IsNullOrEmpty(msg)) return true;
 
-            if (msg.StartsWith("/draft", System.StringComparison.OrdinalIgnoreCase))
+            if (msg.StartsWith("/draft", System.StringComparison.OrdinalIgnoreCase)
+                && !msg.StartsWith("/draftrecap", System.StringComparison.OrdinalIgnoreCase))
             {
                 if (!AmongUsClient.Instance.AmHost)
                 {
@@ -33,6 +34,23 @@ namespace DraftModeTOUM.Patches
                 return false;
             }
 
+            if (msg.StartsWith("/draftrecap", System.StringComparison.OrdinalIgnoreCase))
+            {
+                if (!AmongUsClient.Instance.AmHost)
+                {
+                    DraftManager.SendChatLocal("<color=red>Only host can change draft settings.</color>");
+                }
+                else
+                {
+                    DraftManager.ShowRecap = !DraftManager.ShowRecap;
+                    string status = DraftManager.ShowRecap
+                        ? "<color=green>ON</color>"
+                        : "<color=red>OFF</color>";
+                    DraftManager.SendChatLocal($"<color=#FFD700>Draft recap is now: {status}</color>");
+                }
+                __instance.freeChatField.textArea.Clear();
+                return false;
+            }
 
             if (DraftManager.IsDraftActive)
             {
@@ -53,6 +71,7 @@ namespace DraftModeTOUM.Patches
                     return false;
                 }
             }
+
             return true;
         }
     }
