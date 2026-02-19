@@ -30,8 +30,8 @@ public sealed class DraftSelectionMinigame : Minigame
     private int _currentCardIndex;
 
     // Managed-only data — hidden from IL2CPP to avoid bridge failures
-    [HideFromIl2Cpp] private List<DraftRoleCard>? _cards;
-    [HideFromIl2Cpp] private Action<int>?          _onPick;
+    private List<DraftRoleCard>? _cards;
+    private Action<int>?          _onPick;
 
     public DraftSelectionMinigame(IntPtr cppPtr) : base(cppPtr) { }
 
