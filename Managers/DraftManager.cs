@@ -1,10 +1,13 @@
 ﻿using AmongUs.GameOptions;
 using DraftModeTOUM.Patches;
+using MiraAPI.LocalSettings;
 using HarmonyLib;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using Reactor.Utilities;
 using UnityEngine;
 using TownOfUs.Utilities;
 
@@ -14,7 +17,7 @@ namespace DraftModeTOUM.Managers
     {
         public byte PlayerId { get; set; }
         public int SlotNumber { get; set; }
-        public string ChosenRole { get; set; }
+        public string? ChosenRole { get; set; }
         public bool HasPicked { get; set; }
         public bool IsPickingNow { get; set; }
         public List<string> OfferedRoles { get; set; } = new List<string>();
@@ -29,6 +32,9 @@ namespace DraftModeTOUM.Managers
 
         // ── Recap toggle ─────────────────────────────────────────────────────
         public static bool ShowRecap { get; set; } = true;
+        public static bool AutoStartAfterDraft { get; set; } = true;
+        public static bool LockLobbyOnDraftStart { get; set; } = true;
+        public static bool UseRoleChances { get; set; } = true;
 
         // ── Faction caps — change these to adjust limits ─────────────────────
         public static int MaxImpostors { get; set; } = 2;
@@ -42,12 +48,15 @@ namespace DraftModeTOUM.Managers
         private static Dictionary<int, PlayerDraftState> _slotMap = new Dictionary<int, PlayerDraftState>();
         private static Dictionary<byte, int> _pidToSlot = new Dictionary<byte, int>();
         private static List<string> _lobbyRolePool = new List<string>();
-        private static HashSet<string> _draftedRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static Dictionary<string, int> _roleMaxCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        private static Dictionary<string, int> _roleWeights = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        private static Dictionary<string, RoleFaction> _roleFactions = new Dictionary<string, RoleFaction>(StringComparer.OrdinalIgnoreCase);
+        private static Dictionary<string, int> _draftedRoleCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
         public static int GetSlotForPlayer(byte playerId) => _pidToSlot.TryGetValue(playerId, out int slot) ? slot : -1;
-        public static PlayerDraftState GetStateForSlot(int slot) => _slotMap.TryGetValue(slot, out var s) ? s : null;
+        public static PlayerDraftState? GetStateForSlot(int slot) => _slotMap.TryGetValue(slot, out var s) ? s : null;
 
-        public static PlayerDraftState GetCurrentPickerState()
+        public static PlayerDraftState? GetCurrentPickerState()
         {
             if (!IsDraftActive || CurrentTurn < 1 || CurrentTurn > TurnOrder.Count) return null;
             return GetStateForSlot(TurnOrder[CurrentTurn - 1]);
@@ -81,15 +90,21 @@ namespace DraftModeTOUM.Managers
         public static void StartDraft()
         {
             if (!AmongUsClient.Instance.AmHost) return;
+            if (AmongUsClient.Instance.GameState != InnerNet.InnerNetClient.GameStates.Joined) return;
             DraftTicker.EnsureExists();
             Reset();
             UpCommandRequests.Clear();
+            ApplyLocalSettings();
 
             var players = PlayerControl.AllPlayerControls.ToArray()
                 .Where(p => p != null && !p.Data.Disconnected).ToList();
             _soloTestMode = (players.Count < 2);
 
-            _lobbyRolePool = RolePoolBuilder.BuildPool();
+            var pool = RolePoolBuilder.BuildPool();
+            _lobbyRolePool = pool.Roles;
+            _roleMaxCounts = pool.MaxCounts;
+            _roleWeights = pool.Weights;
+            _roleFactions = pool.Factions;
             if (_lobbyRolePool.Count == 0) return;
 
             int totalSlots = _soloTestMode ? 4 : players.Count;
@@ -115,7 +130,18 @@ namespace DraftModeTOUM.Managers
             IsDraftActive = true;
 
             DraftNetworkHelper.BroadcastDraftStart(totalSlots, syncPids, syncSlots);
+
+            // Tell each real player their slot number privately
+            NotifyPlayersOfSlots();
+
             OfferRolesToCurrentPicker();
+        }
+
+        private static void NotifyPlayersOfSlots()
+        {
+            // Host's panel is refreshed via RefreshTurnList (no chat message needed).
+            // Non-hosts receive the slot map so their panel can display their number too.
+            DraftNetworkHelper.BroadcastSlotNotifications(_pidToSlot);
         }
 
         public static void Reset()
@@ -123,10 +149,14 @@ namespace DraftModeTOUM.Managers
             IsDraftActive = false;
             CurrentTurn = 0;
             TurnTimeLeft = 0f;
+            DraftUiManager.CloseAll();
             _slotMap.Clear();
             _pidToSlot.Clear();
             _lobbyRolePool.Clear();
-            _draftedRoles.Clear();
+            _draftedRoleCounts.Clear();
+            _roleMaxCounts.Clear();
+            _roleWeights.Clear();
+            _roleFactions.Clear();
             TurnOrder.Clear();
             _soloTestMode = false;
             _impostorsDrafted = 0;
@@ -141,14 +171,15 @@ namespace DraftModeTOUM.Managers
             if (TurnTimeLeft <= 0f) AutoPickRandom();
         }
 
-        // Returns roles that are undrafted and within faction caps
+        // Returns roles that are within counts and faction caps
         private static List<string> GetAvailableRoles()
         {
             return _lobbyRolePool.Where(r =>
             {
-                if (_draftedRoles.Contains(r)) return false;
-                if (RoleCategory.IsImpostor(r) && _impostorsDrafted >= MaxImpostors) return false;
-                if (RoleCategory.IsNeutral(r) && _neutralsDrafted >= MaxNeutrals) return false;
+                if (GetDraftedCount(r) >= GetMaxCount(r)) return false;
+                var faction = GetFaction(r);
+                if (faction == RoleFaction.Impostor && _impostorsDrafted >= MaxImpostors) return false;
+                if (faction == RoleFaction.Neutral && _neutralsDrafted >= MaxNeutrals) return false;
                 return true;
             }).ToList();
         }
@@ -170,19 +201,16 @@ namespace DraftModeTOUM.Managers
             {
                 // Try to offer variety: up to 1 impostor and 1 neutral in the 3 options,
                 // only if their caps haven't been reached yet
-                var impostorOffer = available
-                    .Where(r => RoleCategory.IsImpostor(r))
-                    .OrderBy(_ => UnityEngine.Random.value)
-                    .Take(1).ToList();
+                var impostorOffer = PickWeightedUnique(
+                    available.Where(r => GetFaction(r) == RoleFaction.Impostor).ToList(),
+                    1);
 
-                var neutralOffer = available
-                    .Where(r => RoleCategory.IsNeutral(r))
-                    .OrderBy(_ => UnityEngine.Random.value)
-                    .Take(1).ToList();
+                var neutralOffer = PickWeightedUnique(
+                    available.Where(r => GetFaction(r) == RoleFaction.Neutral).ToList(),
+                    1);
 
                 var crewOffer = available
-                    .Where(r => RoleCategory.GetFaction(r) == RoleFaction.Crewmate)
-                    .OrderBy(_ => UnityEngine.Random.value)
+                    .Where(r => GetFaction(r) == RoleFaction.Crewmate)
                     .ToList();
 
                 var offered = new List<string>();
@@ -191,14 +219,15 @@ namespace DraftModeTOUM.Managers
 
                 // Fill to 3 with crew first, then any remaining available roles
                 int needed = 3 - offered.Count;
-                offered.AddRange(crewOffer.Take(needed));
+                offered.AddRange(PickWeightedUnique(
+                    crewOffer.Where(r => !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase))).ToList(),
+                    needed));
 
                 if (offered.Count < 3)
                 {
-                    var extras = available
-                        .Where(r => !offered.Contains(r))
-                        .OrderBy(_ => UnityEngine.Random.value)
-                        .Take(3 - offered.Count);
+                    var extras = PickWeightedUnique(
+                        available.Where(r => !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase))).ToList(),
+                        3 - offered.Count);
                     offered.AddRange(extras);
                 }
 
@@ -229,9 +258,8 @@ namespace DraftModeTOUM.Managers
         private static string PickFullRandom()
         {
             var available = GetAvailableRoles();
-            return available.Count > 0
-                ? available[UnityEngine.Random.Range(0, available.Count)]
-                : "Crewmate";
+            if (available.Count == 0) return "Crewmate";
+            return UseRoleChances ? PickWeighted(available) : available[UnityEngine.Random.Range(0, available.Count)];
         }
 
         private static void FinalisePickForCurrentSlot(string roleName)
@@ -242,10 +270,10 @@ namespace DraftModeTOUM.Managers
             state.ChosenRole = roleName;
             state.HasPicked = true;
             state.IsPickingNow = false;
-            _draftedRoles.Add(roleName);
+            _draftedRoleCounts[roleName] = GetDraftedCount(roleName) + 1;
 
             // Update faction counters
-            var faction = RoleCategory.GetFaction(roleName);
+            var faction = GetFaction(roleName);
             if (faction == RoleFaction.Impostor) _impostorsDrafted++;
             else if (faction == RoleFaction.Neutral) _neutralsDrafted++;
 
@@ -254,15 +282,22 @@ namespace DraftModeTOUM.Managers
                 $"Impostors: {_impostorsDrafted}/{MaxImpostors}, Neutrals: {_neutralsDrafted}/{MaxNeutrals}");
 
             CurrentTurn++;
+
+            // Refresh the turn list for anyone who has the minigame open
+            DraftUiManager.RefreshTurnList();
+
             if (CurrentTurn > TurnOrder.Count)
             {
                 IsDraftActive = false;
                 ApplyAllRoles();
+                DraftUiManager.CloseAll();
 
                 if (ShowRecap)
                     DraftNetworkHelper.BroadcastRecap(BuildRecapMessage());
                 else
                     DraftNetworkHelper.BroadcastRecap("<color=#FFD700><b>── DRAFT COMPLETE ──</b></color>");
+
+                TryStartGameAfterDraft();
             }
             else
             {
@@ -278,26 +313,33 @@ namespace DraftModeTOUM.Managers
             foreach (var slot in TurnOrder)
             {
                 var s = GetStateForSlot(slot);
-                string color = RoleCategory.GetFaction(s.ChosenRole) switch
+                if (s == null) continue;
+                string role = s.ChosenRole ?? "?";
+                string color = GetFaction(role) switch
                 {
                     RoleFaction.Impostor => "#FF4444",
                     RoleFaction.Neutral => "#AA44FF",
                     _ => "#4BD7E4"
                 };
-                sb.AppendLine($"Player {s.SlotNumber}: <color={color}>{s.ChosenRole}</color>");
+                sb.AppendLine($"Player {s.SlotNumber}: <color={color}>{role}</color>");
             }
             return sb.ToString();
         }
 
         private static void ApplyAllRoles()
         {
+            // Register every drafted role via UpCommandRequests so TOU-Mira's
+            // SelectRoles patch honours them when the game actually starts.
             foreach (var state in _slotMap.Values)
             {
-                if (state.PlayerId >= 200) continue;
+                if (state.PlayerId >= 200 || state.ChosenRole == null) continue;
                 var p = PlayerControl.AllPlayerControls.ToArray()
                     .FirstOrDefault(x => x.PlayerId == state.PlayerId);
-                if (p != null)
-                    UpCommandRequests.SetRequest(p.Data.PlayerName, state.ChosenRole);
+                if (p == null) continue;
+
+                DraftModePlugin.Logger.LogInfo(
+                    $"[DraftManager] Queuing role '{state.ChosenRole}' for '{p.Data.PlayerName}'");
+                UpCommandRequests.SetRequest(p.Data.PlayerName, state.ChosenRole);
             }
         }
 
@@ -305,6 +347,94 @@ namespace DraftModeTOUM.Managers
         {
             if (HudManager.Instance?.Chat)
                 HudManager.Instance.Chat.AddChat(PlayerControl.LocalPlayer, msg);
+        }
+
+        private static void ApplyLocalSettings()
+        {
+            var settings = LocalSettingsTabSingleton<DraftModeLocalSettings>.Instance;
+            if (settings == null) return;
+
+            TurnDuration = Mathf.Clamp(settings.TurnDuration.Value, 5f, 60f);
+            ShowRecap = settings.ShowRecap.Value;
+            AutoStartAfterDraft = settings.AutoStartAfterDraft.Value;
+            LockLobbyOnDraftStart = settings.LockLobbyOnDraftStart.Value;
+            UseRoleChances = settings.UseRoleChances.Value;
+
+            MaxImpostors = Mathf.Clamp(Mathf.RoundToInt(settings.MaxImpostors.Value), 0, 10);
+            MaxNeutrals = Mathf.Clamp(Mathf.RoundToInt(settings.MaxNeutrals.Value), 0, 15);
+
+        }
+
+        private static int GetDraftedCount(string roleName)
+        {
+            return _draftedRoleCounts.TryGetValue(roleName, out var count) ? count : 0;
+        }
+
+        private static int GetMaxCount(string roleName)
+        {
+            return _roleMaxCounts.TryGetValue(roleName, out var count) ? count : 1;
+        }
+
+        private static RoleFaction GetFaction(string roleName)
+        {
+            return _roleFactions.TryGetValue(roleName, out var faction)
+                ? faction
+                : RoleCategory.GetFaction(roleName);
+        }
+
+        private static int GetWeight(string roleName)
+        {
+            return _roleWeights.TryGetValue(roleName, out var weight) ? Math.Max(1, weight) : 1;
+        }
+
+        private static string PickWeighted(List<string> candidates)
+        {
+            int total = candidates.Sum(GetWeight);
+            if (total <= 0) return candidates[UnityEngine.Random.Range(0, candidates.Count)];
+
+            int roll = UnityEngine.Random.Range(1, total + 1);
+            int acc = 0;
+            foreach (var r in candidates)
+            {
+                acc += GetWeight(r);
+                if (roll <= acc) return r;
+            }
+            return candidates[UnityEngine.Random.Range(0, candidates.Count)];
+        }
+
+        private static List<string> PickWeightedUnique(List<string> candidates, int count)
+        {
+            var results = new List<string>();
+            var temp = new List<string>(candidates);
+
+            while (results.Count < count && temp.Count > 0)
+            {
+                var pick = UseRoleChances ? PickWeighted(temp) : temp[UnityEngine.Random.Range(0, temp.Count)];
+                results.Add(pick);
+                temp.Remove(pick);
+            }
+
+            return results;
+        }
+
+        private static void TryStartGameAfterDraft()
+        {
+            if (!AutoStartAfterDraft) return;
+            if (!AmongUsClient.Instance.AmHost) return;
+            if (AmongUsClient.Instance.GameState != InnerNet.InnerNetClient.GameStates.Joined) return;
+
+            // Small delay so UpCommandRequests are registered before SelectRoles fires
+            Coroutines.Start(CoStartGame());
+        }
+
+        private static IEnumerator CoStartGame()
+        {
+            yield return new WaitForSeconds(0.5f);
+            if (GameStartManager.Instance != null)
+            {
+                DraftModePlugin.Logger.LogInfo("[DraftManager] Auto-starting game after draft.");
+                GameStartManager.Instance.BeginGame();
+            }
         }
     }
 }
