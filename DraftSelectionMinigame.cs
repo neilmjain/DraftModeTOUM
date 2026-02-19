@@ -9,27 +9,29 @@ using Reactor.Utilities.Attributes;
 using TMPro;
 using TownOfUs.Assets;
 using UnityEngine;
-using UnityEngine.Events;
 
 namespace DraftModeTOUM;
 
 [RegisterInIl2Cpp]
 public sealed class DraftSelectionMinigame : Minigame
 {
-    public Transform?     RolesHolder;
-    public GameObject?    RolePrefab;
-    public TextMeshPro?   StatusText;
-    public TextMeshPro?   RoleName;
+    // Unity-visible fields (no managed generic types)
+    public Transform?      RolesHolder;
+    public GameObject?     RolePrefab;
+    public TextMeshPro?    StatusText;
+    public TextMeshPro?    RoleName;
     public SpriteRenderer? RoleIcon;
-    public TextMeshPro?   RoleTeam;
-    public GameObject?    RedRing;
-    public GameObject?    WarpRing;
-    public TextMeshPro?   TurnListText;   // left panel: turn order + my slot
+    public TextMeshPro?    RoleTeam;
+    public GameObject?     RedRing;
+    public GameObject?     WarpRing;
+    public TextMeshPro?    TurnListText;
 
     private readonly Color _bgColor = new Color32(24, 0, 0, 215);
-    private Action<int>?  _onPick;
-    private List<DraftRoleCard> _cards = new();
     private int _currentCardIndex;
+
+    // Managed-only data — hidden from IL2CPP to avoid bridge failures
+    [HideFromIl2Cpp] private List<DraftRoleCard>? _cards;
+    [HideFromIl2Cpp] private Action<int>?          _onPick;
 
     public DraftSelectionMinigame(IntPtr cppPtr) : base(cppPtr) { }
 
@@ -40,13 +42,13 @@ public sealed class DraftSelectionMinigame : Minigame
         RolesHolder = transform.FindChild("Roles");
         RolePrefab  = transform.FindChild("RoleCardHolder").gameObject;
 
-        var status  = transform.FindChild("Status");
-        StatusText  = status.gameObject.GetComponent<TextMeshPro>();
-        RoleName    = status.FindChild("RoleName").gameObject.GetComponent<TextMeshPro>();
-        RoleTeam    = status.FindChild("RoleTeam").gameObject.GetComponent<TextMeshPro>();
-        RoleIcon    = status.FindChild("RoleImage").gameObject.GetComponent<SpriteRenderer>();
-        RedRing     = status.FindChild("RoleRing").gameObject;
-        WarpRing    = status.FindChild("RingWarp").gameObject;
+        var status = transform.FindChild("Status");
+        StatusText = status.gameObject.GetComponent<TextMeshPro>();
+        RoleName   = status.FindChild("RoleName").gameObject.GetComponent<TextMeshPro>();
+        RoleTeam   = status.FindChild("RoleTeam").gameObject.GetComponent<TextMeshPro>();
+        RoleIcon   = status.FindChild("RoleImage").gameObject.GetComponent<SpriteRenderer>();
+        RedRing    = status.FindChild("RoleRing").gameObject;
+        WarpRing   = status.FindChild("RingWarp").gameObject;
 
         var font    = HudManager.Instance.TaskPanel.taskText.font;
         var fontMat = HudManager.Instance.TaskPanel.taskText.fontMaterial;
@@ -66,18 +68,18 @@ public sealed class DraftSelectionMinigame : Minigame
         RedRing.SetActive(false);
         WarpRing.SetActive(false);
 
-        // ── Left-side panel ────────────────────────────────────────────────
+        // Left-side turn order panel
         var listGo = new GameObject("DraftTurnList");
         listGo.transform.SetParent(transform, false);
         listGo.transform.localPosition = new Vector3(-4.2f, 1.8f, -1f);
 
         TurnListText = listGo.AddComponent<TextMeshPro>();
-        TurnListText.font              = font;
-        TurnListText.fontMaterial      = fontMat;
-        TurnListText.fontSize          = 1.5f;
-        TurnListText.alignment         = TextAlignmentOptions.TopLeft;
-        TurnListText.enableWordWrapping = false;
-        TurnListText.text              = "";
+        TurnListText.font               = font;
+        TurnListText.fontMaterial       = fontMat;
+        TurnListText.fontSize           = 1.5f;
+        TurnListText.alignment          = TextAlignmentOptions.TopLeft;
+        TurnListText.enableWordWrapping  = false;
+        TurnListText.text               = "";
         TurnListText.gameObject.SetActive(false);
     }
 
@@ -93,8 +95,8 @@ public sealed class DraftSelectionMinigame : Minigame
     [HideFromIl2Cpp]
     public void Open(List<DraftRoleCard> cards, Action<int> onPick)
     {
-        _cards = cards;
-        _onPick = onPick;
+        _cards            = cards;
+        _onPick           = onPick;
         _currentCardIndex = 0;
         ClearCards();
         Coroutines.Start(CoOpen(this));
@@ -121,37 +123,34 @@ public sealed class DraftSelectionMinigame : Minigame
         TurnListText.text = BuildTurnListText();
     }
 
+    [HideFromIl2Cpp]
     private static string BuildTurnListText()
     {
         var sb = new System.Text.StringBuilder();
 
-        // My slot number at the top — prominently
         int mySlot = Managers.DraftManager.GetSlotForPlayer(PlayerControl.LocalPlayer.PlayerId);
         if (mySlot > 0)
             sb.AppendLine($"<color=#00FFFF><b>You are Player #{mySlot}</b></color>\n");
 
         sb.AppendLine("<b>── Draft Order ──</b>");
 
-        var order   = Managers.DraftManager.TurnOrder;
-        int current = Managers.DraftManager.CurrentTurn;
-
+        var order = Managers.DraftManager.TurnOrder;
         for (int i = 0; i < order.Count; i++)
         {
             int slot  = order[i];
             var state = Managers.DraftManager.GetStateForSlot(slot);
             if (state == null) continue;
 
-            bool isMe = state.PlayerId == PlayerControl.LocalPlayer.PlayerId;
-            string me = isMe ? " ◀" : "";
-
+            bool   isMe  = state.PlayerId == PlayerControl.LocalPlayer.PlayerId;
+            string me    = isMe ? " ◀" : "";
             string label, color;
-            if (state.HasPicked)        { label = "(Picked)";           color = "#888888"; }
-            else if (state.IsPickingNow){ label = "<b>(Picking)</b>";   color = "#FFD700"; }
-            else                        { label = "(Waiting)";          color = "#AAAAAA"; }
+
+            if (state.HasPicked)         { label = "(Picked)";         color = "#888888"; }
+            else if (state.IsPickingNow) { label = "<b>(Picking)</b>"; color = "#FFD700"; }
+            else                         { label = "(Waiting)";        color = "#AAAAAA"; }
 
             sb.AppendLine($"<color={color}>Player {slot}... {label}{me}</color>");
         }
-
         return sb.ToString();
     }
 
@@ -165,14 +164,14 @@ public sealed class DraftSelectionMinigame : Minigame
         RoleIcon!.gameObject.SetActive(true);
         RedRing!.SetActive(true);
         WarpRing!.SetActive(true);
-
         RoleIcon.transform.localScale = Vector3.one * 0.35f;
 
         TurnListText!.gameObject.SetActive(true);
         RefreshTurnList();
 
-        foreach (var card in _cards)
-            CreateCard(card);
+        if (_cards != null)
+            foreach (var card in _cards)
+                CreateCard(card);
 
         TransType = TransitionType.None;
         Begin(null);
@@ -188,7 +187,8 @@ public sealed class DraftSelectionMinigame : Minigame
         }
     }
 
-    private PassiveButton CreateCard(DraftRoleCard card)
+    [HideFromIl2Cpp]
+    private void CreateCard(DraftRoleCard card)
     {
         var newRoleObj     = Instantiate(RolePrefab, RolesHolder);
         var actualCard     = newRoleObj!.transform.GetChild(0);
@@ -201,45 +201,53 @@ public sealed class DraftSelectionMinigame : Minigame
 
         selection.SetActive(false);
 
+        // Capture locals for closures — avoid capturing 'card' directly through IL2CPP boundary
+        string roleName = card.RoleName;
+        string teamName = card.TeamName;
+        Sprite? icon    = card.Icon;
+        int     index   = card.Index;
+        Color   color   = card.Color;
+
         passiveButton.OnMouseOver.AddListener(new Action(() =>
         {
             selection.SetActive(true);
-            RoleName!.text = card.RoleName;
-            RoleTeam!.text = card.TeamName;
-            if (card.Icon != null) RoleIcon!.sprite = card.Icon;
+            RoleName!.text = roleName;
+            RoleTeam!.text = teamName;
+            if (icon != null) RoleIcon!.sprite = icon;
             RoleIcon!.transform.localScale = Vector3.one * 0.35f;
         }));
         passiveButton.OnMouseOut.AddListener(new Action(() => { selection.SetActive(false); }));
 
-        float angle = (2 * Mathf.PI / _cards.Count) * _currentCardIndex;
+        int count = _cards?.Count ?? 1;
+        float angle = (2 * Mathf.PI / count) * _currentCardIndex;
         float x = 1.9f * Mathf.Cos(angle);
         float y = 0.1f + 1.9f * Mathf.Sin(angle);
 
         newRoleObj.transform.localPosition = new Vector3(x, y, -1f);
-        newRoleObj.name = card.RoleName + " DraftSelection";
+        newRoleObj.name = roleName + " DraftSelection";
 
-        roleText.text  = card.RoleName;
-        teamText.text  = card.TeamName;
-        roleImage.sprite = card.Icon;
+        roleText.text    = roleName;
+        teamText.text    = teamName;
+        roleImage.sprite = icon;
         roleImage.transform.localScale = Vector3.one * 0.4f;
 
-        buttonRollover.OverColor = card.Color;
-        roleText.color = card.Color;
-        teamText.color = card.Color;
+        buttonRollover.OverColor = color;
+        roleText.color           = color;
+        teamText.color           = color;
 
         passiveButton.OnClick.RemoveAllListeners();
         passiveButton.OnClick.AddListener(new Action(() =>
         {
-            _onPick!.Invoke(card.Index);
+            _onPick?.Invoke(index);
             Close();
         }));
 
         _currentCardIndex++;
         newRoleObj.gameObject.SetActive(true);
-        return passiveButton;
     }
 }
 
+// Plain managed class — NOT registered in IL2CPP, no bridge issues
 public sealed class DraftRoleCard
 {
     public string  RoleName { get; }
