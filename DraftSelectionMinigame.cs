@@ -185,7 +185,7 @@ public sealed class DraftSelectionMinigame : Minigame
                 CreateCard(card);
 
         TransType = TransitionType.None;
-        Begin(null);
+        MinigameStubs.Begin(this, null);
     }
 
     private void ClearCards()
