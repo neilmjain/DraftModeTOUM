@@ -1,4 +1,4 @@
-﻿using BepInEx;
+using BepInEx;
 using BepInEx.Logging;
 using BepInEx.Configuration;
 using BepInEx.Unity.IL2CPP;
@@ -22,10 +22,7 @@ namespace DraftModeTOUM
 
         public string OptionsTitleText => "Draft Mode";
 
-        public ConfigFile GetConfigFile()
-        {
-            return Config;
-        }
+        public ConfigFile GetConfigFile() => Config;
 
         public override void Load()
         {
@@ -35,19 +32,18 @@ namespace DraftModeTOUM
             try
             {
                 ClassInjector.RegisterTypeInIl2Cpp<DraftTicker>();
-                ClassInjector.RegisterTypeInIl2Cpp<DraftSelectionMinigame>();
+                ClassInjector.RegisterTypeInIl2Cpp<DraftScreenController>();
+                ClassInjector.RegisterTypeInIl2Cpp<DraftCircleMinigame>();
                 ClassInjector.RegisterTypeInIl2Cpp<DraftStatusOverlay>();
-                Logger.LogInfo("DraftTicker + DraftSelectionMinigame + DraftStatusOverlay registered successfully.");
+                Logger.LogInfo("DraftTicker + DraftScreenController + DraftCircleMinigame + DraftStatusOverlay registered.");
             }
             catch (System.Exception ex)
             {
-                Logger.LogError($"Failed to register DraftTicker: {ex}");
+                Logger.LogError($"Failed to register types: {ex}");
             }
 
             _harmony = new Harmony(PluginInfo.PLUGIN_GUID);
             _harmony.PatchAll();
-
-            // Manually patch internal TOUM class + OnPlayerJoined rejoin guard
             RequireModPatch.Apply(_harmony);
 
             Logger.LogInfo("DraftModeTOUM loaded successfully!");
@@ -62,12 +58,11 @@ namespace DraftModeTOUM
 
     internal static class PluginInfo
     {
-        public const string PLUGIN_GUID = "com.draftmodetoun.mod";
-        public const string PLUGIN_NAME = "DraftModeTOUM";
+        public const string PLUGIN_GUID    = "com.draftmodetoun.mod";
+        public const string PLUGIN_NAME    = "DraftModeTOUM";
         public const string PLUGIN_VERSION = "1.0.4";
     }
 
-    // Clear kicked/verified lists when the host disconnects from a lobby
     [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnDisconnected))]
     public static class OnDisconnectPatch
     {
@@ -75,43 +70,33 @@ namespace DraftModeTOUM
         public static void Postfix()
         {
             RequireModPatch.ClearSession();
-            // If draft was still active (not yet complete), cancel it and clear requests.
-            // If ApplyAllRoles already ran (draft complete, awaiting game start),
-            // preserve UpCommandRequests so SelectRoles can still read them.
+            DraftScreenController.Hide();
+            DraftUiManager.CloseAll();
             bool draftStillInProgress = DraftManager.IsDraftActive;
             DraftManager.Reset(cancelledBeforeCompletion: draftStillInProgress);
-            DraftModePlugin.Logger.LogInfo($"[DraftModePlugin] Session cleared on disconnect (cancelled={draftStillInProgress}).");
+            DraftModePlugin.Logger.LogInfo($"[DraftModePlugin] Session cleared on disconnect.");
         }
     }
 
-    // Once the game actually starts, clean up any leftover UpCommandRequests.
-    // TOU-Mira's SelectRoles removes them one-by-one via RemoveRequest as it assigns,
-    // but this is a safety net for any extras.
     [HarmonyPatch(typeof(GameStartManager), nameof(GameStartManager.BeginGame))]
     public static class BeginGameCleanupPatch
     {
         [HarmonyPostfix]
         public static void Postfix()
         {
-            // Requests will be consumed by SelectRoles; schedule a cleanup slightly after.
-            DraftModePlugin.Logger.LogInfo("[DraftModePlugin] Game started — UpCommandRequests will be consumed by SelectRoles.");
-
-            // Hide the draft status overlay now that the game is actually starting.
-            // The draft finished before this point (IsDraftActive is already false),
-            // so the Update() loop won't catch it — we force-hide it here.
+            DraftScreenController.Hide();
             DraftStatusOverlay.Hide();
-            DraftModePlugin.Logger.LogInfo("[DraftModePlugin] DraftStatusOverlay hidden on game start.");
+            DraftModePlugin.Logger.LogInfo("[DraftModePlugin] Game started — UI hidden.");
         }
     }
 
-    // Belt-and-suspenders: also hide when the intro cutscene begins (covers
-    // the brief window between BeginGame and the scene fully loading).
     [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.CoBegin))]
     public static class IntroCutsceneHidePatch
     {
         [HarmonyPrefix]
         public static void Prefix()
         {
+            DraftScreenController.Hide();
             DraftStatusOverlay.Hide();
         }
     }
