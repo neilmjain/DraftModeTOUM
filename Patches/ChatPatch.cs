@@ -1,6 +1,6 @@
 using DraftModeTOUM.Managers;
 using HarmonyLib;
-using MiraAPI.LocalSettings;
+using MiraAPI.GameOptions;
 using System.Linq;
 using UnityEngine;
 
@@ -10,10 +10,9 @@ namespace DraftModeTOUM.Patches
     public static class ChatPatch
     {
         [HarmonyPrefix]
-        [HarmonyPriority(Priority.First + 100)] // Must beat TOU-Mira's Priority.First catch-all
+        [HarmonyPriority(Priority.First + 100)]
         public static bool Prefix(ChatController __instance)
         {
-            // Use .Text (not .textArea.text) — same property TOU-Mira reads
             string msg = __instance.freeChatField.Text?.Trim() ?? string.Empty;
             if (string.IsNullOrEmpty(msg)) return true;
 
@@ -29,7 +28,7 @@ namespace DraftModeTOUM.Patches
                 {
                     DraftManager.SendChatLocal("<color=red>Draft already active.</color>");
                 }
-                else if (!LocalSettingsTabSingleton<DraftModeLocalSettings>.Instance.EnableDraftToggle.Value)
+                else if (!OptionGroupSingleton<DraftModeOptions>.Instance.EnableDraft)
                 {
                     DraftManager.SendChatLocal("<color=red>Draft Mode is disabled in settings.</color>");
                 }
@@ -68,12 +67,10 @@ namespace DraftModeTOUM.Patches
                 }
                 else
                 {
-                    var settings = LocalSettingsTabSingleton<DraftModeLocalSettings>.Instance;
-                    settings.ShowRecap.Value = !settings.ShowRecap.Value;
-                    DraftManager.ShowRecap = settings.ShowRecap.Value;
-                    string status = DraftManager.ShowRecap
-                        ? "<color=green>ON</color>"
-                        : "<color=red>OFF</color>";
+                    var opts = OptionGroupSingleton<DraftModeOptions>.Instance;
+                    opts.ShowRecap = !opts.ShowRecap;
+                    DraftManager.ShowRecap = opts.ShowRecap;
+                    string status = DraftManager.ShowRecap ? "<color=green>ON</color>" : "<color=red>OFF</color>";
                     DraftManager.SendChatLocal($"<color=#FFD700>Draft recap is now: {status}</color>");
                 }
                 ClearChat(__instance);
