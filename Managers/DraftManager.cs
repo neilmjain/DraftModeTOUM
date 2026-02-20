@@ -1,6 +1,5 @@
 ﻿using AmongUs.GameOptions;
 using DraftModeTOUM.Patches;
-using MiraAPI.LocalSettings;
 using MiraAPI.Utilities;
 using HarmonyLib;
 using System;
@@ -401,18 +400,15 @@ namespace DraftModeTOUM.Managers
 
         private static void ApplyLocalSettings()
         {
-            var settings = LocalSettingsTabSingleton<DraftModeLocalSettings>.Instance;
-            if (settings == null) return;
+            var opts = MiraAPI.GameOptions.OptionGroupSingleton<DraftModeOptions>.Instance;
 
-            TurnDuration = Mathf.Clamp(settings.TurnDuration.Value, 5f, 60f);
-            ShowRecap = settings.ShowRecap.Value;
-            AutoStartAfterDraft = settings.AutoStartAfterDraft.Value;
-            LockLobbyOnDraftStart = settings.LockLobbyOnDraftStart.Value;
-            UseRoleChances = settings.UseRoleChances.Value;
-
-            MaxImpostors = Mathf.Clamp(Mathf.RoundToInt(settings.MaxImpostors.Value), 0, 10);
-            MaxNeutrals = Mathf.Clamp(Mathf.RoundToInt(settings.MaxNeutrals.Value), 0, 15);
-
+            TurnDuration      = Mathf.Clamp(opts.TurnDurationSeconds, 5f, 60f);
+            ShowRecap         = opts.ShowRecap;
+            AutoStartAfterDraft   = opts.AutoStartAfterDraft;
+            LockLobbyOnDraftStart = opts.LockLobbyOnDraftStart;
+            UseRoleChances    = opts.UseRoleChances;
+            MaxImpostors      = Mathf.Clamp(Mathf.RoundToInt(opts.MaxImpostors), 0, 10);
+            MaxNeutrals       = Mathf.Clamp(Mathf.RoundToInt(opts.MaxNeutrals),  0, 15);
         }
 
         private static int GetDraftedCount(string roleName)

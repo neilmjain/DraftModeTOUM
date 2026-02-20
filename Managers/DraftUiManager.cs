@@ -12,90 +12,105 @@ namespace DraftModeTOUM.Managers
 {
     public static class DraftUiManager
     {
-        private static DraftSelectionMinigame? _minigame;
+        // Circle-style minigame instance (only used when UseCircleStyle is on)
+        private static DraftCircleMinigame? _circleMinigame;
+
+        private static bool UseCircle =>
+            MiraAPI.GameOptions.OptionGroupSingleton<DraftModeOptions>.Instance.UseCircleStyle;
 
         public static void ShowPicker(List<string> roles)
         {
             if (HudManager.Instance == null || roles == null || roles.Count == 0) return;
 
-            EnsureMinigame();
-            if (_minigame == null)
-            {
-                DraftModePlugin.Logger.LogError("[DraftUiManager] Cannot show picker — minigame failed to create.");
-                return;
-            }
-
-            // Hide the status overlay while the full picker wheel is open
             DraftStatusOverlay.Hide();
 
-            var cards = BuildCards(roles);
-            _minigame.Open(cards, OnPickSelected);
+            if (UseCircle)
+            {
+                ShowCircle(roles);
+            }
+            else
+            {
+                // Cards style — pass up to 3 roles; DraftScreenController adds the Random card
+                var arr = roles.Take(3).ToArray();
+                DraftScreenController.Show(arr);
+            }
         }
 
-        // Called whenever turn state changes so non-pickers still see updated list
         public static void RefreshTurnList()
         {
-            if (_minigame == null || _minigame.gameObject == null) return;
-            if (!_minigame.gameObject.activeSelf) return;
-            _minigame.RefreshTurnList();
+            if (UseCircle && _circleMinigame != null &&
+                _circleMinigame.gameObject != null && _circleMinigame.gameObject.activeSelf)
+            {
+                _circleMinigame.RefreshTurnList();
+            }
+            // Cards style has no turn list panel
         }
 
         public static void CloseAll()
         {
-            if (_minigame == null) return;
-            try
-            {
-                if (_minigame.gameObject != null && _minigame.gameObject.activeSelf)
-                    _minigame.Close();
-            }
-            catch (Exception ex)
-            {
-                DraftModePlugin.Logger.LogWarning($"[DraftUiManager] CloseAll exception (safe to ignore): {ex.Message}");
-            }
-            _minigame = null;
+            // Close cards style
+            DraftScreenController.Hide();
 
-            // Restore the status overlay once the picker wheel closes
+            // Close circle style
+            if (_circleMinigame != null)
+            {
+                try
+                {
+                    if (_circleMinigame.gameObject != null && _circleMinigame.gameObject.activeSelf)
+                        _circleMinigame.Close();
+                }
+                catch (Exception ex)
+                {
+                    DraftModePlugin.Logger.LogWarning($"[DraftUiManager] Circle CloseAll exception (safe to ignore): {ex.Message}");
+                }
+                _circleMinigame = null;
+            }
+
             if (DraftManager.IsDraftActive)
                 DraftStatusOverlay.Show();
         }
 
-        private static void EnsureMinigame()
+        // ── Circle helpers ────────────────────────────────────────────────────
+
+        private static void ShowCircle(List<string> roles)
         {
-            if (_minigame != null)
+            EnsureCircleMinigame();
+            if (_circleMinigame == null)
+            {
+                DraftModePlugin.Logger.LogError("[DraftUiManager] Cannot show circle — minigame failed to create.");
+                return;
+            }
+            var cards = BuildCards(roles);
+            _circleMinigame.Open(cards, OnPickSelected);
+        }
+
+        private static void EnsureCircleMinigame()
+        {
+            if (_circleMinigame != null)
             {
                 bool destroyed = false;
-                try { destroyed = (_minigame.gameObject == null); }
+                try { destroyed = (_circleMinigame.gameObject == null); }
                 catch { destroyed = true; }
-                if (destroyed) _minigame = null;
+                if (destroyed) _circleMinigame = null;
             }
-
-            if (_minigame == null)
-            {
-                _minigame = DraftSelectionMinigame.Create();
-                if (_minigame == null)
-                    DraftModePlugin.Logger.LogError("[DraftUiManager] DraftSelectionMinigame.Create() returned null!");
-            }
+            if (_circleMinigame == null)
+                _circleMinigame = DraftCircleMinigame.Create();
         }
 
-        private static void OnPickSelected(int index)
-        {
-            DraftNetworkHelper.SendPickToHost(index);
-        }
+        private static void OnPickSelected(int index) => DraftNetworkHelper.SendPickToHost(index);
 
         private static List<DraftRoleCard> BuildCards(List<string> roles)
         {
             var cards = new List<DraftRoleCard>();
-
             for (int i = 0; i < roles.Count; i++)
             {
                 string roleName = roles[i];
-                var role     = FindRoleByName(roleName);
-                string team  = role != null ? MiscUtils.GetParsedRoleAlignment(role) : "Unknown";
-                var icon     = GetRoleIcon(role);
-                var color    = GetRoleColor(role);
+                var role   = FindRoleByName(roleName);
+                string team = role != null ? MiscUtils.GetParsedRoleAlignment(role) : "Unknown";
+                var icon  = GetRoleIcon(role);
+                var color = GetRoleColor(role);
                 cards.Add(new DraftRoleCard(roleName, team, icon, color, i));
             }
-
             // Random card always last at index 3
             cards.Add(new DraftRoleCard("Random", "Random", TouRoleIcons.RandomAny.LoadAsset(), Color.white, 3));
             return cards;
