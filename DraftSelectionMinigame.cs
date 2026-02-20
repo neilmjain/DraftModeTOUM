@@ -38,13 +38,23 @@ namespace DraftModeTOUM
         public static void Hide()
         {
             if (Instance == null) return;
-            // Restore hidden HUD children
             foreach (var go in Instance._hiddenHudChildren)
                 if (go != null) go.SetActive(true);
             Instance._hiddenHudChildren.Clear();
             if (Instance._canvasOverlay != null) Destroy(Instance._canvasOverlay);
             if (Instance._cardCanvas    != null) Destroy(Instance._cardCanvas);
             if (Instance._screenRoot    != null) Destroy(Instance._screenRoot);
+            // Clean up cards parented directly to HUD
+            if (HudManager.Instance != null)
+            {
+                var hud = HudManager.Instance.transform;
+                for (int i = hud.childCount - 1; i >= 0; i--)
+                {
+                    var child = hud.GetChild(i);
+                    if (child != null && child.name.StartsWith("DraftCard_"))
+                        Destroy(child.gameObject);
+                }
+            }
             Destroy(Instance.gameObject);
             Instance = null;
         }
@@ -155,33 +165,68 @@ namespace DraftModeTOUM
                 return;
             }
 
+            // Parent cards directly to HUD — bypasses rolesHolder's layout component
+            // which was overriding all our positions and forcing a single row.
+            var cardParent = HudManager.Instance != null
+                ? HudManager.Instance.transform
+                : _screenRoot.transform;
             var rolePrefab = holderGo.gameObject;
-            var parent     = rolesHolder != null ? rolesHolder : _screenRoot.transform;
 
-            // 5. Spawn 4 cards in a straight row
-            for (int i = 0; i < 4; i++)
+            // ── Card count ───────────────────────────────────────────
+            int  offeredCount = _offeredRoles?.Length ?? 0;
+            bool showRandom   = DraftManager.ShowRandomOption;
+            int  totalCards   = offeredCount + (showRandom ? 1 : 0);
+            if (totalCards == 0) return;
+
+            // ── Layout ───────────────────────────────────────────
+            const int maxPerRow = 5;
+            int  row0Count    = Mathf.Min(totalCards, maxPerRow);
+            int  row1Count    = totalCards - row0Count;
+            bool hasSecondRow = row1Count > 0;
+
+            // Scale everything from actual camera width so nothing ever overflows
+            var   layoutCam = Camera.main;
+            float screenW   = layoutCam != null
+                ? layoutCam.orthographicSize * 2f * ((float)Screen.width / Screen.height)
+                : 16f;
+            float screenH   = layoutCam != null ? layoutCam.orthographicSize * 2f : 9f;
+
+            // Divide usable width equally among row-0 cards (largest row)
+            float usableW   = screenW * 0.88f;
+            float spacing   = usableW / row0Count;          // centre-to-centre gap
+            // Card prefab is ~1.75 world units wide at scale 1
+            float cardScale = Mathf.Clamp(spacing / 1.75f * 0.80f, 0.15f, 0.46f);
+            float rowGap    = screenH * 0.44f;              // vertical gap between rows
+
+            float row0Y = hasSecondRow ?  rowGap * 0.28f : -0.05f;
+            float row1Y = row0Y - rowGap;
+
+            // ── Spawn ───────────────────────────────────────────
+            for (int i = 0; i < totalCards; i++)
             {
                 int    idx      = i;
-                bool   isRandom = (i == 3);
+                bool   isRandom = showRandom && (i == offeredCount);
                 string roleName = isRandom
                     ? "Random"
                     : (_offeredRoles != null && i < _offeredRoles.Length ? _offeredRoles[i] : "?");
                 Color color = isRandom ? Color.white : RoleColors.GetColor(roleName);
 
-                var newRoleObj = Instantiate(rolePrefab, parent);
+                bool  inRow1  = i >= row0Count;
+                int   colIdx  = inRow1 ? i - row0Count : i;
+                int   rowSize = inRow1 ? row1Count : row0Count;
+                float xPos    = -((rowSize - 1) * spacing) / 2f + colIdx * spacing;
+                float yPos    = inRow1 ? row1Y : row0Y;
+
+                var newRoleObj = Instantiate(rolePrefab, cardParent);
                 var actualCard = newRoleObj.transform.GetChild(0);
 
-                // Straight horizontal row, no rotation
-                float spacing = 1.35f;
-                float startX  = -((4 - 1) * spacing) / 2f;
-                float xPos    = startX + i * spacing;
+                DontDestroyOnLoad(newRoleObj);
                 newRoleObj.transform.localRotation = Quaternion.identity;
-                newRoleObj.transform.localPosition = new Vector3(xPos, -0.6f, i * CardZSpacing);
-                newRoleObj.transform.localScale    = Vector3.one * 0.78f;
+                newRoleObj.transform.localPosition = new Vector3(xPos, yPos, i * CardZSpacing);
+                newRoleObj.transform.localScale    = Vector3.one * cardScale;
                 newRoleObj.SetActive(true);
                 newRoleObj.name = $"DraftCard_{i}_{roleName}";
 
-                // Card text fields
                 var roleText  = actualCard.GetChild(0).GetComponent<TextMeshPro>();
                 var roleImage = actualCard.GetChild(1).GetComponent<SpriteRenderer>();
                 var teamText  = actualCard.GetChild(2).GetComponent<TextMeshPro>();
@@ -189,7 +234,6 @@ namespace DraftModeTOUM
                 if (roleText != null) { roleText.text = roleName; roleText.color = color; }
                 if (teamText != null) { teamText.text = isRandom ? "Any" : GetFactionLabel(roleName); teamText.color = color; }
 
-                // Card background: very dark role color
                 var cardBgSr = actualCard.GetComponent<SpriteRenderer>();
                 if (cardBgSr != null)
                 {
@@ -197,19 +241,14 @@ namespace DraftModeTOUM
                     cardBgSr.color = Color.HSVToRGB(h, Mathf.Clamp01(s * 0.75f), Mathf.Clamp01(v * 0.18f));
                 }
 
-                // Glow halos (sort orders above bg=500, below card face=502)
                 AddGlow(newRoleObj, color, scale: 1.18f, alpha: 0.35f, z: 0.8f,  sortOrder: 10000);
                 AddGlow(newRoleObj, color, scale: 1.32f, alpha: 0.15f, z: 1.2f,  sortOrder: 10000);
 
-                // Icon
                 if (roleImage != null)
-                {
                     roleImage.sprite = isRandom
                         ? TouRoleIcons.RandomAny.LoadAsset()
                         : TryGetRoleSprite(roleName) ?? roleImage.sprite;
-                }
 
-                // Button
                 var btn = actualCard.GetComponent<PassiveButton>();
                 if (btn != null)
                 {
@@ -217,11 +256,12 @@ namespace DraftModeTOUM
                     btn.OnClick.AddListener((System.Action)(() => OnCardClicked(idx)));
 
                     var glowSrs = newRoleObj.GetComponentsInChildren<SpriteRenderer>();
+                    float hoverScale = cardScale + 0.06f;
 
                     btn.OnMouseOver = new UnityEngine.Events.UnityEvent();
                     btn.OnMouseOver.AddListener((System.Action)(() =>
                     {
-                        newRoleObj.transform.localScale = Vector3.one * 0.88f;
+                        newRoleObj.transform.localScale = Vector3.one * hoverScale;
                         foreach (var sr in glowSrs)
                             if (sr.gameObject.name == "Glow")
                                 sr.color = new Color(color.r, color.g, color.b, Mathf.Clamp01(sr.color.a * 2.2f));
@@ -230,7 +270,7 @@ namespace DraftModeTOUM
                     btn.OnMouseOut = new UnityEngine.Events.UnityEvent();
                     btn.OnMouseOut.AddListener((System.Action)(() =>
                     {
-                        newRoleObj.transform.localScale = Vector3.one * 0.78f;
+                        newRoleObj.transform.localScale = Vector3.one * cardScale;
                         foreach (var sr in glowSrs)
                             if (sr.gameObject.name == "Glow")
                                 sr.color = new Color(color.r, color.g, color.b, Mathf.Clamp01(sr.color.a / 2.2f));
@@ -240,7 +280,7 @@ namespace DraftModeTOUM
                     if (rollover != null) rollover.OverColor = color;
                 }
 
-                DraftModePlugin.Logger.LogInfo($"[DraftScreenController] Card {i} ({roleName}) spawned.");
+                DraftModePlugin.Logger.LogInfo($"[DraftScreenController] Card {i} '{roleName}' row={(inRow1?1:0)} col={colIdx} scale={cardScale:F2}.");
             }
 
             // Final sweep: force ALL SpriteRenderers and TMP renderers onto "UI" layer above bg (500)
@@ -278,8 +318,8 @@ namespace DraftModeTOUM
             if (_hasPicked) return;
             _hasPicked = true;
 
-            string label = (index < 3 && _offeredRoles != null && index < _offeredRoles.Length)
-                ? _offeredRoles[index] : "Random";
+            int offeredCount = _offeredRoles?.Length ?? 0;
+            string label = (index < offeredCount) ? _offeredRoles![index] : "Random";
             DraftModePlugin.Logger.LogInfo($"[DraftScreenController] Picked {index} ({label}).");
 
             DraftNetworkHelper.SendPickToHost(index);

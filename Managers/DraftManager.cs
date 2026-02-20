@@ -35,6 +35,8 @@ namespace DraftModeTOUM.Managers
         public static bool AutoStartAfterDraft { get; set; } = true;
         public static bool LockLobbyOnDraftStart { get; set; } = true;
         public static bool UseRoleChances { get; set; } = true;
+        public static int  OfferedRolesCount { get; set; } = 3;
+        public static bool ShowRandomOption  { get; set; } = true;
 
         // ── Faction caps — change these to adjust limits ─────────────────────
         public static int MaxImpostors       { get; set; } = 2;
@@ -217,45 +219,42 @@ namespace DraftModeTOUM.Managers
 
             var available = GetAvailableRoles();
 
+            int target = OfferedRolesCount;
+
             if (available.Count == 0)
             {
-                // Absolute fallback — should rarely happen
-                state.OfferedRoles = new List<string> { "Crewmate", "Crewmate", "Crewmate" };
+                state.OfferedRoles = Enumerable.Repeat("Crewmate", target).ToList();
             }
             else
             {
-                // Offer variety: try 1 impostor, 1 neutral (killing or passive), 1 crew
-                var impostorOffer = PickWeightedUnique(
-                    available.Where(r => GetFaction(r) == RoleFaction.Impostor).ToList(), 1);
-
-                // Pick one neutral slot — prefer killing if available, otherwise passive
-                var nkPool = available.Where(r => GetFaction(r) == RoleFaction.NeutralKilling).ToList();
-                var npPool = available.Where(r => GetFaction(r) == RoleFaction.Neutral).ToList();
-                var neutralOffer = nkPool.Count > 0
-                    ? PickWeightedUnique(nkPool, 1)
-                    : PickWeightedUnique(npPool, 1);
-
-                var crewOffer = available.Where(r => GetFaction(r) == RoleFaction.Crewmate).ToList();
-
                 var offered = new List<string>();
-                offered.AddRange(impostorOffer);
-                offered.AddRange(neutralOffer);
 
-                // Fill to 3 with crew first, then any remaining available roles
-                int needed = 3 - offered.Count;
-                offered.AddRange(PickWeightedUnique(
-                    crewOffer.Where(r => !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase))).ToList(),
-                    needed));
+                // Guarantee 1 impostor + 1 neutral when target >= 3
+                if (target >= 3)
+                {
+                    var impPool = available.Where(r => GetFaction(r) == RoleFaction.Impostor).ToList();
+                    offered.AddRange(PickWeightedUnique(impPool, 1));
 
-                if (offered.Count < 3)
+                    var nkPool = available.Where(r => GetFaction(r) == RoleFaction.NeutralKilling).ToList();
+                    var npPool = available.Where(r => GetFaction(r) == RoleFaction.Neutral).ToList();
+                    var neutralPool = nkPool.Count > 0 ? nkPool : npPool;
+                    offered.AddRange(PickWeightedUnique(
+                        neutralPool.Where(r => !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase))).ToList(), 1));
+                }
+
+                // Fill remaining with crew, then anything else
+                var crewPool = available.Where(r => GetFaction(r) == RoleFaction.Crewmate
+                    && !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase))).ToList();
+                offered.AddRange(PickWeightedUnique(crewPool, target - offered.Count));
+
+                if (offered.Count < target)
                 {
                     var extras = PickWeightedUnique(
                         available.Where(r => !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase))).ToList(),
-                        3 - offered.Count);
+                        target - offered.Count);
                     offered.AddRange(extras);
                 }
 
-                // Shuffle so the faction roles aren't always in the same position
                 state.OfferedRoles = offered.OrderBy(_ => UnityEngine.Random.value).ToList();
             }
 
@@ -268,8 +267,8 @@ namespace DraftModeTOUM.Managers
             var state = GetCurrentPickerState();
             if (state == null || state.PlayerId != playerId || state.HasPicked) return false;
 
-            // Option 4 (index 3) = random, still respects faction caps
-            string chosenRole = (choiceIndex == 3 || choiceIndex >= state.OfferedRoles.Count)
+            // Last index (= OfferedRoles.Count) is the Random card
+            string chosenRole = (choiceIndex >= state.OfferedRoles.Count)
                 ? PickFullRandom()
                 : state.OfferedRoles[choiceIndex];
 
@@ -277,7 +276,20 @@ namespace DraftModeTOUM.Managers
             return true;
         }
 
-        private static void AutoPickRandom() => FinalisePickForCurrentSlot(PickFullRandom());
+        private static void AutoPickRandom()
+        {
+            var state = GetCurrentPickerState();
+            // If Random option is off, pick from what was offered — not the whole pool
+            if (!ShowRandomOption && state != null && state.OfferedRoles.Count > 0)
+            {
+                var pick = state.OfferedRoles[UnityEngine.Random.Range(0, state.OfferedRoles.Count)];
+                FinalisePickForCurrentSlot(pick);
+            }
+            else
+            {
+                FinalisePickForCurrentSlot(PickFullRandom());
+            }
+        }
 
         private static string PickFullRandom()
         {
@@ -413,7 +425,9 @@ namespace DraftModeTOUM.Managers
             ShowRecap         = opts.ShowRecap;
             AutoStartAfterDraft   = opts.AutoStartAfterDraft;
             LockLobbyOnDraftStart = opts.LockLobbyOnDraftStart;
-            UseRoleChances    = opts.UseRoleChances;
+            UseRoleChances     = opts.UseRoleChances;
+            OfferedRolesCount  = Mathf.Clamp(Mathf.RoundToInt(opts.OfferedRolesCount), 1, 9);
+            ShowRandomOption   = opts.ShowRandomOption;
             MaxImpostors       = Mathf.Clamp(Mathf.RoundToInt(opts.MaxImpostors),       0, 10);
             MaxNeutralKillings = Mathf.Clamp(Mathf.RoundToInt(opts.MaxNeutralKillings),  0, 10);
             MaxNeutralPassives = Mathf.Clamp(Mathf.RoundToInt(opts.MaxNeutralPassives),  0, 10);

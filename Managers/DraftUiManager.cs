@@ -42,9 +42,7 @@ namespace DraftModeTOUM.Managers
             }
             else
             {
-                // Cards style — pass up to 3 roles; DraftScreenController adds the Random card
-                var arr = roles.Take(3).ToArray();
-                DraftScreenController.Show(arr);
+                DraftScreenController.Show(roles.ToArray());
             }
         }
 
@@ -123,8 +121,9 @@ namespace DraftModeTOUM.Managers
                 var color = GetRoleColor(role);
                 cards.Add(new DraftRoleCard(roleName, team, icon, color, i));
             }
-            // Random card always last at index 3
-            cards.Add(new DraftRoleCard("Random", "Random", TouRoleIcons.RandomAny.LoadAsset(), Color.white, 3));
+            // Random card only added when host setting is on; index = roles.Count
+            if (DraftManager.ShowRandomOption)
+                cards.Add(new DraftRoleCard("Random", "Random", TouRoleIcons.RandomAny.LoadAsset(), Color.white, roles.Count));
             return cards;
         }
 

@@ -27,6 +27,12 @@ public sealed class DraftModeOptions : AbstractOptionGroup
     [ModdedToggleOption("Use Role Chances For Weighting")]
     public bool UseRoleChances { get; set; } = true;
 
+    [ModdedToggleOption("Show Random Option")]
+    public bool ShowRandomOption { get; set; } = true;
+
+    [ModdedNumberOption("Offered Roles Per Turn", 1f, 9f, 1f, MiraNumberSuffixes.None, "0")]
+    public float OfferedRolesCount { get; set; } = 3f;
+
     [ModdedNumberOption("Turn Duration", 5f, 60f, 1f, MiraNumberSuffixes.Seconds, "0")]
     public float TurnDurationSeconds { get; set; } = 10f;
 
