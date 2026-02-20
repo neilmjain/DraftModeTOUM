@@ -169,7 +169,8 @@ namespace DraftModeTOUM.Managers
             TurnTimeLeft = 0f;
             DraftUiManager.CloseAll();
             DraftStatusOverlay.Hide();
-            DraftRecapOverlay.Hide();
+            // Only hide recap on manual cancel — after a completed draft it auto-hides when the game loads
+            if (cancelledBeforeCompletion) DraftRecapOverlay.Hide();
             _slotMap.Clear();
             _pidToSlot.Clear();
             _lobbyRolePool.Clear();
@@ -333,14 +334,9 @@ namespace DraftModeTOUM.Managers
                 DraftUiManager.CloseAll();
 
                 if (ShowRecap)
-                {
-                    var recapEntries = BuildRecapEntries(); // build BEFORE Reset clears slotMap
-                    DraftNetworkHelper.BroadcastRecap(BuildRecapMessage(), recapEntries);
-                }
+                    DraftNetworkHelper.BroadcastRecap(BuildRecapMessage());
                 else
-                {
-                    DraftNetworkHelper.BroadcastRecap("<color=#FFD700><b>── DRAFT COMPLETE ──</b></color>", null);
-                }
+                    DraftNetworkHelper.BroadcastRecap("<color=#FFD700><b>\u2500\u2500 DRAFT COMPLETE \u2500\u2500</b></color>");
 
                 // Reset draft state but do NOT clear UpCommandRequests
                 // (TOU-Mira's SelectRoles will read them when the game starts)
@@ -530,7 +526,8 @@ namespace DraftModeTOUM.Managers
 
         private static IEnumerator CoStartGame()
         {
-            yield return new WaitForSeconds(0.5f);
+            // Wait long enough for the recap overlay to be visible before the scene changes
+            yield return new WaitForSeconds(ShowRecap ? 4.0f : 0.5f);
             if (GameStartManager.Instance != null)
             {
                 DraftModePlugin.Logger.LogInfo("[DraftManager] Auto-starting game after draft.");

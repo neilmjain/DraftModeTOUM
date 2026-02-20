@@ -61,19 +61,28 @@ namespace DraftModeTOUM.Managers
             // Close cards style
             DraftScreenController.Hide();
 
-            // Close circle style
-            if (_circleMinigame != null)
+            // Close circle style — grab ref and null immediately so re-entrant calls are no-ops
+            var circle = _circleMinigame;
+            _circleMinigame = null;
+            if (circle != null)
             {
                 try
                 {
-                    if (_circleMinigame.gameObject != null && _circleMinigame.gameObject.activeSelf)
-                        _circleMinigame.Close();
+                    bool alive = false;
+                    try { alive = circle.gameObject != null && circle.gameObject.activeSelf; } catch { }
+                    if (alive) circle.Close();
+                    else
+                    {
+                        // Was never opened (still inactive) — just destroy it
+                        bool exists = false;
+                        try { exists = circle.gameObject != null; } catch { }
+                        if (exists) UnityEngine.Object.Destroy(circle.gameObject);
+                    }
                 }
                 catch (Exception ex)
                 {
                     DraftModePlugin.Logger.LogWarning($"[DraftUiManager] Circle CloseAll exception (safe to ignore): {ex.Message}");
                 }
-                _circleMinigame = null;
             }
 
             if (DraftManager.IsDraftActive)
@@ -107,7 +116,15 @@ namespace DraftModeTOUM.Managers
                 _circleMinigame = DraftCircleMinigame.Create();
         }
 
-        private static void OnPickSelected(int index) => DraftNetworkHelper.SendPickToHost(index);
+        private static void OnPickSelected(int index)
+        {
+            // Close and destroy the circle immediately, THEN send pick
+            // (SendPickToHost → CloseAll will see null and skip circle cleanly)
+            var circle = _circleMinigame;
+            _circleMinigame = null;
+            try { circle?.Close(); } catch { }
+            DraftNetworkHelper.SendPickToHost(index);
+        }
 
         private static List<DraftRoleCard> BuildCards(List<string> roles)
         {
