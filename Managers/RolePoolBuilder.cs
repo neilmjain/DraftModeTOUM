@@ -68,6 +68,10 @@ namespace DraftModeTOUM.Managers
                         continue;
                 }
 
+                // Hard-banned roles — never appear in draft regardless of settings
+                var rn = role.NiceName ?? "";
+                if (IsBannedRole(rn)) continue;
+
                 int count = roleOptions.GetNumPerGame(role.Role);
                 int chance = roleOptions.GetChancePerGame(role.Role);
                 if (count <= 0 || chance <= 0) continue;
@@ -80,6 +84,14 @@ namespace DraftModeTOUM.Managers
                 AddRole(pool, roleName, count, chance, faction);
             }
         }
+
+        // Roles that can never be drafted no matter what the host configures
+        private static readonly HashSet<string> _bannedRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Haunter", "Spectre"
+        };
+
+        public static bool IsBannedRole(string roleName) => _bannedRoles.Contains(roleName);
 
         private static void AddRole(DraftRolePool pool, string roleName, int maxCount, int weight, RoleFaction faction)
         {
