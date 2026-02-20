@@ -199,14 +199,7 @@ public sealed class DraftSelectionMinigame : Minigame
             }
         }
 
-        // Random card — always last
-        var randomBtn = CreateCard("Random", "Random", TouRoleIcons.RandomAny.LoadAsset(), Color.white);
-        randomBtn.OnClick.RemoveAllListeners();
-        randomBtn.OnClick.AddListener(new Action(() =>
-        {
-            _onPick?.Invoke(3);
-            Close();
-        }));
+        // Random card is already included in _cards by DraftUiManager.BuildCards — do NOT add another one here
 
         Coroutines.Start(CoAnimateCards());
         TransType = TransitionType.None;
