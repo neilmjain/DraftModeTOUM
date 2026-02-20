@@ -46,31 +46,9 @@ namespace DraftModeTOUM.Patches
 
                 case DraftRpc.Recap:
                     if (!AmongUsClient.Instance.AmHost)
-                    {
-                        string chatMsg = reader.ReadString();
-                        DraftManager.SendChatLocal(chatMsg);
-                        // Read recap entries for the GUI overlay
-                        int entryCount = reader.ReadInt32();
-                        var entries = new System.Collections.Generic.List<RecapEntry>();
-                        for (int i = 0; i < entryCount; i++)
-                        {
-                            string pName    = reader.ReadString();
-                            string roleName = reader.ReadString();
-                            float  r        = reader.ReadSingle();
-                            float  g        = reader.ReadSingle();
-                            float  b        = reader.ReadSingle();
-                            entries.Add(new RecapEntry(pName, roleName, new UnityEngine.Color(r, g, b)));
-                        }
-                        if (entries.Count > 0)
-                            DraftRecapOverlay.Show(entries);
-                    }
+                        DraftManager.SendChatLocal(reader.ReadString());
                     else
-                    {
-                        reader.ReadString(); // chat msg
-                        int entryCount = reader.ReadInt32();
-                        for (int i = 0; i < entryCount; i++)
-                        { reader.ReadString(); reader.ReadString(); reader.ReadSingle(); reader.ReadSingle(); reader.ReadSingle(); }
-                    }
+                        reader.ReadString(); // drain echo
                     return false;
 
                 case DraftRpc.SlotNotify:
@@ -243,13 +221,9 @@ namespace DraftModeTOUM.Patches
             AmongUsClient.Instance.FinishRpcImmediately(writer);
         }
 
-        public static void BroadcastRecap(string recapText, System.Collections.Generic.List<RecapEntry> entries)
+        public static void BroadcastRecap(string recapText)
         {
             DraftManager.SendChatLocal(recapText);
-
-            // Show the GUI overlay on the host
-            if (entries != null && entries.Count > 0)
-                DraftRecapOverlay.Show(entries);
 
             var writer = AmongUsClient.Instance.StartRpcImmediately(
                 PlayerControl.LocalPlayer.NetId,
@@ -257,19 +231,6 @@ namespace DraftModeTOUM.Patches
                 Hazel.SendOption.Reliable,
                 -1);
             writer.Write(recapText);
-            int count = entries?.Count ?? 0;
-            writer.Write(count);
-            if (entries != null)
-            {
-                foreach (var e in entries)
-                {
-                    writer.Write(e.PlayerName);
-                    writer.Write(e.RoleName);
-                    writer.Write(e.RoleColor.r);
-                    writer.Write(e.RoleColor.g);
-                    writer.Write(e.RoleColor.b);
-                }
-            }
             AmongUsClient.Instance.FinishRpcImmediately(writer);
         }
     }
