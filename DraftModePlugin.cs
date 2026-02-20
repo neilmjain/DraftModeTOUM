@@ -95,6 +95,24 @@ namespace DraftModeTOUM
         {
             // Requests will be consumed by SelectRoles; schedule a cleanup slightly after.
             DraftModePlugin.Logger.LogInfo("[DraftModePlugin] Game started — UpCommandRequests will be consumed by SelectRoles.");
+
+            // Hide the draft status overlay now that the game is actually starting.
+            // The draft finished before this point (IsDraftActive is already false),
+            // so the Update() loop won't catch it — we force-hide it here.
+            DraftStatusOverlay.Hide();
+            DraftModePlugin.Logger.LogInfo("[DraftModePlugin] DraftStatusOverlay hidden on game start.");
+        }
+    }
+
+    // Belt-and-suspenders: also hide when the intro cutscene begins (covers
+    // the brief window between BeginGame and the scene fully loading).
+    [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.CoBegin))]
+    public static class IntroCutsceneHidePatch
+    {
+        [HarmonyPrefix]
+        public static void Prefix()
+        {
+            DraftStatusOverlay.Hide();
         }
     }
 }
