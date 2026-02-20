@@ -169,6 +169,7 @@ namespace DraftModeTOUM.Managers
             TurnTimeLeft = 0f;
             DraftUiManager.CloseAll();
             DraftStatusOverlay.Hide();
+            DraftRecapOverlay.Hide();
             _slotMap.Clear();
             _pidToSlot.Clear();
             _lobbyRolePool.Clear();
@@ -332,9 +333,14 @@ namespace DraftModeTOUM.Managers
                 DraftUiManager.CloseAll();
 
                 if (ShowRecap)
-                    DraftNetworkHelper.BroadcastRecap(BuildRecapMessage());
+                {
+                    var recapEntries = BuildRecapEntries(); // build BEFORE Reset clears slotMap
+                    DraftNetworkHelper.BroadcastRecap(BuildRecapMessage(), recapEntries);
+                }
                 else
-                    DraftNetworkHelper.BroadcastRecap("<color=#FFD700><b>── DRAFT COMPLETE ──</b></color>");
+                {
+                    DraftNetworkHelper.BroadcastRecap("<color=#FFD700><b>── DRAFT COMPLETE ──</b></color>", null);
+                }
 
                 // Reset draft state but do NOT clear UpCommandRequests
                 // (TOU-Mira's SelectRoles will read them when the game starts)
@@ -368,6 +374,33 @@ namespace DraftModeTOUM.Managers
                 sb.AppendLine($"Player {s.SlotNumber}: <color={color}>{role}</color>");
             }
             return sb.ToString();
+        }
+
+        public static List<RecapEntry> BuildRecapEntries()
+        {
+            var entries = new List<RecapEntry>();
+            foreach (var slot in TurnOrder)
+            {
+                var s = GetStateForSlot(slot);
+                if (s == null) continue;
+                string role = s.ChosenRole ?? "?";
+
+                // Resolve player name
+                var player = PlayerControl.AllPlayerControls.ToArray()
+                    .FirstOrDefault(p => p.PlayerId == s.PlayerId);
+                string playerName = player?.Data?.PlayerName ?? $"Player {s.SlotNumber}";
+
+                UnityEngine.Color roleColor = GetFaction(role) switch
+                {
+                    RoleFaction.Impostor       => new UnityEngine.Color(1f,   0.27f, 0.27f),
+                    RoleFaction.NeutralKilling => new UnityEngine.Color(1f,   0.53f, 0f),
+                    RoleFaction.Neutral        => new UnityEngine.Color(0.67f,0.27f, 1f),
+                    _                          => new UnityEngine.Color(0.29f,0.84f, 0.9f)
+                };
+
+                entries.Add(new RecapEntry(playerName, role, roleColor));
+            }
+            return entries;
         }
 
         private static void ApplyAllRoles()
