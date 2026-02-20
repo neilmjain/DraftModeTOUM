@@ -15,7 +15,6 @@ namespace DraftModeTOUM.Managers
             {
                 // Crew Investigative
                 "aurial"       => new Color32(179, 77,  153, 255),
-                "haunter"      => new Color32(212, 212, 212, 255),
                 "investigator" => new Color32(0,   179, 179, 255),
                 "lookout"      => new Color32(51,  255, 102, 255),
                 "mystic"       => new Color32(77,  153, 230, 255),
