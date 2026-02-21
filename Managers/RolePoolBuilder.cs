@@ -76,7 +76,7 @@ namespace DraftModeTOUM.Managers
                 int chance = roleOptions.GetChancePerGame(role.Role);
                 if (count <= 0 || chance <= 0) continue;
 
-                var roleName = role.GetRoleName();
+                var roleName = role.GetType().Name.Replace("Role", "");
                 // Use RoleCategory for neutrals so killing vs passive is correctly split
                 var faction = role.IsImpostor()
                     ? RoleFaction.Impostor
