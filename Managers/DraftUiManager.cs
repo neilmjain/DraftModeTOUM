@@ -128,12 +128,14 @@ namespace DraftModeTOUM.Managers
         }
 
         private static RoleBehaviour? FindRoleByName(string roleName)
-        {
-            if (RoleManager.Instance == null) return null;
-            string normalized = Normalize(roleName);
-            return RoleManager.Instance.AllRoles.ToArray()
-                .FirstOrDefault(r => Normalize(r.NiceName) == normalized);
-        }
+{
+    if (RoleManager.Instance == null) return null;
+    string normalized = Normalize(roleName);
+    return RoleManager.Instance.AllRoles.ToArray()
+        .FirstOrDefault(r =>
+            Normalize(r.GetType().Name.Replace("Role", "")) == normalized ||
+            Normalize(r.NiceName) == normalized);  // fallback if not renamed
+}
 
         private static Sprite? GetRoleIcon(RoleBehaviour? role)
         {
