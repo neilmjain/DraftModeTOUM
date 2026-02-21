@@ -352,8 +352,8 @@ namespace DraftModeTOUM.Managers
 
                 string roleName = state.ChosenRole;
                 var match = allRoles.FirstOrDefault(r =>
-                    r.NiceName.Equals(roleName, StringComparison.OrdinalIgnoreCase) ||
-                    r.NiceName.Replace(" ", "").Equals(roleName.Replace(" ", ""), StringComparison.OrdinalIgnoreCase));
+    Normalize(r.GetType().Name.Replace("Role", "")) == Normalize(roleName) ||
+    r.NiceName.Equals(roleName, StringComparison.OrdinalIgnoreCase));
                 if (match != null) roleName = match.NiceName;
 
                 UpCommandRequests.SetRequest(p.Data.PlayerName, roleName);
