@@ -1,4 +1,6 @@
-# DraftModeTOUM
+<p align="center">
+  <img src="screenshots/logo-banner.png" alt="DraftModeTOUM" width="700"/>
+</p>
 
 A [BepInEx](https://github.com/BepInEx/BepInEx) mod for **Among Us** running [Town of Us: Mira Edition (TOUM)](https://github.com/AU-Avengers/TOU-Mira) that adds a **Draft Mode** — players take turns picking their roles before the game begins instead of having them assigned randomly.
 
@@ -72,23 +74,8 @@ Roles are arranged in a spinning wheel around the center of the screen. Hovering
 
 The host can configure Draft Mode from the **Mira settings menu** in the lobby. All options are synced to all players.
 
-![Draft Mode Settings](screenshots/settings.png)
+![Draft Mode Settings](screenshots/Settings.png)
 
-| Setting | Default | Description |
-|---|---|---|
-| Enable Draft Mode | On | Enables or disables the `/draft` command entirely |
-| Use Circle Style | Off | Sets the default UI style for all players (Off = Cards) |
-| Lock Lobby On Draft Start | On | Prevents players from joining once the draft begins |
-| Auto-Start After Draft | On | Automatically starts the game once all picks are made |
-| Show Draft Recap | On | Shows a recap of everyone's roles after the draft ends |
-| Use Role Chances For Weighting | On | Weighs role offers based on configured chances in TOUM settings |
-| Show Random Option | On | Adds a "Random" option to each player's pick screen |
-| Show Background Overlay | On | Shows a full-screen black background during the draft |
-| Offered Roles Per Turn | 3 | How many roles each player is offered on their turn (1–9) |
-| Turn Duration | 10s | How long each player has to make their pick (5–60s) |
-| Max Impostors | 2 | Maximum number of Impostor roles that can be drafted |
-| Max Neutral Killings | 2 | Maximum number of Neutral Killing roles that can be drafted |
-| Max Neutral Other | 3 | Maximum number of passive/benign Neutral roles that can be drafted |
 
 ---
 
