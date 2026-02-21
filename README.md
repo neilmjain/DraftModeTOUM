@@ -82,7 +82,7 @@ Player 3: Engineer
 To **hide the recap** (so roles stay secret), the host can type:
 
 ```
-/draftrecap
+/draftrecap or the Toggle Recap Setting In The Host Options
 ```
 
 This toggles the recap on or off. When off, players only see `── DRAFT COMPLETE ──` at the end with no roles listed. Toggle it again to turn it back on. The current state is confirmed in chat:
