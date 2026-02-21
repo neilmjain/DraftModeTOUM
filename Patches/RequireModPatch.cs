@@ -14,8 +14,6 @@ namespace DraftModeTOUM.Patches
 
         private const string MOD_NAME = "DraftModeTOUM";
 
-        // How long (seconds) to wait after join before doing the fallback verification kick.
-        // ReceiveClientModInfo usually fires within 1-2 seconds; 8s gives plenty of margin.
         private const float FALLBACK_KICK_DELAY = 8f;
 
         private static string RequiredEntry =>
@@ -23,14 +21,13 @@ namespace DraftModeTOUM.Patches
 
         private static readonly HashSet<int> _verifiedClients = new HashSet<int>();
 
-        // Kicked for joining mid-draft — re-kick immediately on rejoin, no second chance
+        // Kicked for joining mid-draft — re-kick immediately on rejoin
         private static readonly HashSet<string> _draftKickedPlayers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Kicked for missing/wrong mod — do NOT re-kick on join, let ModInfoPostfix verify first.
-        // If they still fail verification, ModInfoPostfix kicks them again and re-adds them here.
+        // Confirmed missing/wrong mod — re-kick immediately on rejoin
         private static readonly HashSet<string> _modKickedPlayers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Pending fallback kicks: clientId -> (playerName, timeOfJoin)
+        // Pending fallback kicks: clientId -> (playerName, deadline)
         private static readonly Dictionary<int, (string playerName, float deadline)> _pendingFallbacks
             = new Dictionary<int, (string, float)>();
 
@@ -38,20 +35,39 @@ namespace DraftModeTOUM.Patches
         {
             try
             {
-                var modInfoTarget = AccessTools.Method(
-                    "TownOfUs.Networking.SendClientModInfoRpc:ReceiveClientModInfo");
+                // Patch Handle() on the RPC class — this is what TOU actually calls,
+                // and it reliably fires because it's a virtual method on a registered RPC type.
+                var handleTarget = AccessTools.Method(
+                    "TownOfUs.Networking.SendClientModInfoRpc:Handle");
 
-                if (modInfoTarget == null)
+                if (handleTarget == null)
                 {
                     DraftModePlugin.Logger.LogError(
-                        "[RequireModPatch] Could not find ReceiveClientModInfo — mod check patch skipped.");
+                        "[RequireModPatch] Could not find SendClientModInfoRpc.Handle — trying ReceiveClientModInfo fallback.");
+
+                    // Fallback: try patching ReceiveClientModInfo directly
+                    var receiveTarget = AccessTools.Method(
+                        "TownOfUs.Networking.SendClientModInfoRpc:ReceiveClientModInfo");
+
+                    if (receiveTarget == null)
+                    {
+                        DraftModePlugin.Logger.LogError(
+                            "[RequireModPatch] Could not find ReceiveClientModInfo either — mod check patch skipped.");
+                    }
+                    else
+                    {
+                        harmony.Patch(receiveTarget,
+                            postfix: new HarmonyMethod(typeof(RequireModPatch), nameof(ModInfoPostfix)));
+                        DraftModePlugin.Logger.LogInfo(
+                            $"[RequireModPatch] Patched ReceiveClientModInfo (fallback). Requiring: {RequiredEntry}");
+                    }
                 }
                 else
                 {
-                    harmony.Patch(modInfoTarget,
-                        postfix: new HarmonyMethod(typeof(RequireModPatch), nameof(ModInfoPostfix)));
+                    harmony.Patch(handleTarget,
+                        postfix: new HarmonyMethod(typeof(RequireModPatch), nameof(HandlePostfix)));
                     DraftModePlugin.Logger.LogInfo(
-                        $"[RequireModPatch] Patched ReceiveClientModInfo. Requiring: {RequiredEntry}");
+                        $"[RequireModPatch] Patched SendClientModInfoRpc.Handle. Requiring: {RequiredEntry}");
                 }
 
                 var joinTarget = AccessTools.Method(
@@ -75,6 +91,13 @@ namespace DraftModeTOUM.Patches
             }
         }
 
+        // Postfix for Handle(PlayerControl innerNetObject, Dictionary<byte,string> data)
+        public static void HandlePostfix(PlayerControl innerNetObject, Dictionary<byte, string>? data)
+        {
+            if (data == null || data.Count == 0) return;
+            ModInfoPostfix(innerNetObject, data);
+        }
+
         public static void OnPlayerJoinedPostfix(ClientData data)
         {
             if (!AmongUsClient.Instance.AmHost) return;
@@ -82,9 +105,18 @@ namespace DraftModeTOUM.Patches
 
             string playerName = data.PlayerName ?? string.Empty;
 
-            // Only immediately re-kick players who joined during an active draft —
-            // mod-kicked players are allowed back in to give ModInfoPostfix a chance
-            // to verify they now have the correct mod installed.
+            // Re-kick immediately if confirmed missing/wrong mod
+            if (_modKickedPlayers.Contains(playerName))
+            {
+                DraftModePlugin.Logger.LogInfo(
+                    $"[RequireModPatch] Mod-kicked player '{playerName}' rejoined — kicking again.");
+                DraftManager.SendChatLocal(
+                    $"<color=#FF4444>{playerName} was kicked — <b>{MOD_NAME}</b> v{PluginInfo.PLUGIN_VERSION} is required to join.</color>");
+                AmongUsClient.Instance.KickPlayer(data.Id, false);
+                return;
+            }
+
+            // Re-kick immediately if they joined during an active draft
             if (_draftKickedPlayers.Contains(playerName))
             {
                 DraftModePlugin.Logger.LogInfo(
@@ -106,8 +138,7 @@ namespace DraftModeTOUM.Patches
                 return;
             }
 
-            // Register a fallback deadline. FallbackTick (called from Update) will
-            // kick this player if ModInfoPostfix hasn't verified them in time.
+            // Register fallback in case Handle never fires (e.g. Reactor RPC crash)
             if (RequireDraftMod)
             {
                 _pendingFallbacks[data.Id] = (playerName, Time.realtimeSinceStartup + FALLBACK_KICK_DELAY);
@@ -116,9 +147,65 @@ namespace DraftModeTOUM.Patches
             }
         }
 
+        public static void ModInfoPostfix(PlayerControl client, Dictionary<byte, string> list)
+        {
+            if (!AmongUsClient.Instance.AmHost) return;
+            if (!RequireDraftMod) return;
+            if (client.AmOwner) return;
+
+            var playerInfo = GameData.Instance.GetPlayerById(client.PlayerId);
+            if (playerInfo == null) return;
+
+            string playerName = client.Data.PlayerName ?? string.Empty;
+
+            DraftModePlugin.Logger.LogInfo(
+                $"[RequireModPatch] Checking mods for {playerName} (clientId={playerInfo.ClientId})...");
+
+            if (_verifiedClients.Contains(playerInfo.ClientId))
+            {
+                _pendingFallbacks.Remove(playerInfo.ClientId);
+                DraftModePlugin.Logger.LogInfo(
+                    $"[RequireModPatch] {playerName} already verified — skipping.");
+                return;
+            }
+
+            bool hasMod = list.Values.Any(v =>
+                v.Contains(MOD_NAME, StringComparison.OrdinalIgnoreCase));
+
+            bool hasCorrectVersion = list.Values.Any(v =>
+                v.Contains(RequiredEntry, StringComparison.OrdinalIgnoreCase));
+
+            DraftModePlugin.Logger.LogInfo(
+                $"[RequireModPatch] {playerName} — hasMod={hasMod}, hasCorrectVersion={hasCorrectVersion}, looking for: '{RequiredEntry}'");
+
+            if (hasCorrectVersion)
+            {
+                _verifiedClients.Add(playerInfo.ClientId);
+                _pendingFallbacks.Remove(playerInfo.ClientId);
+                _modKickedPlayers.Remove(playerName);
+                DraftModePlugin.Logger.LogInfo(
+                    $"[RequireModPatch] {playerName} verified with {RequiredEntry}.");
+                return;
+            }
+
+            string reason = hasMod
+                ? $"wrong version of <b>{MOD_NAME}</b> — host has v{PluginInfo.PLUGIN_VERSION}"
+                : $"missing <b>{MOD_NAME}</b> v{PluginInfo.PLUGIN_VERSION}";
+
+            DraftManager.SendChatLocal(
+                $"<color=#FF4444>{playerName} was kicked — {reason}.</color>");
+
+            _pendingFallbacks.Remove(playerInfo.ClientId);
+            _modKickedPlayers.Add(playerName);
+            AmongUsClient.Instance.KickPlayer(playerInfo.ClientId, false);
+
+            DraftModePlugin.Logger.LogInfo(
+                $"[RequireModPatch] Kicked {playerName} ({playerInfo.ClientId}) — {reason}.");
+        }
+
         /// <summary>
-        /// Called every frame from FallbackTickPatch. Checks if any pending fallback
-        /// deadlines have passed and kicks unverified players.
+        /// Called every frame from FallbackTickPatch (LobbyBehaviour.Update).
+        /// Kicks players who joined but never had Handle/ReceiveClientModInfo fire for them.
         /// </summary>
         public static void FallbackTick()
         {
@@ -143,79 +230,28 @@ namespace DraftModeTOUM.Patches
                 var (playerName, _) = _pendingFallbacks[clientId];
                 _pendingFallbacks.Remove(clientId);
 
-                // Already verified — no action needed
                 if (_verifiedClients.Contains(clientId))
                 {
                     DraftModePlugin.Logger.LogInfo(
-                        $"[RequireModPatch] Fallback: {playerName} (clientId={clientId}) already verified — no kick.");
+                        $"[RequireModPatch] Fallback: {playerName} already verified — no kick.");
                     continue;
                 }
 
-                // Check if the player is still in the lobby
                 var client = AmongUsClient.Instance.GetClient(clientId);
                 if (client == null)
                 {
                     DraftModePlugin.Logger.LogInfo(
-                        $"[RequireModPatch] Fallback: {playerName} (clientId={clientId}) already left — no kick.");
+                        $"[RequireModPatch] Fallback: {playerName} already left — no kick.");
                     continue;
                 }
 
-                // Still here and unverified — kick them
                 DraftModePlugin.Logger.LogWarning(
-                    $"[RequireModPatch] Fallback kick: {playerName} (clientId={clientId}) never verified. Kicking.");
+                    $"[RequireModPatch] Fallback kick: {playerName} (clientId={clientId}) — Handle never fired. Kicking.");
                 DraftManager.SendChatLocal(
-                    $"<color=#FF4444>{playerName} was kicked — could not verify <b>{MOD_NAME}</b> v{PluginInfo.PLUGIN_VERSION}. Please ensure you have the mod installed.</color>");
+                    $"<color=#FF4444>{playerName} was kicked — could not verify <b>{MOD_NAME}</b> v{PluginInfo.PLUGIN_VERSION}.</color>");
                 _modKickedPlayers.Add(playerName);
                 AmongUsClient.Instance.KickPlayer(clientId, false);
             }
-        }
-
-        public static void ModInfoPostfix(PlayerControl client, Dictionary<byte, string> list)
-        {
-            if (!AmongUsClient.Instance.AmHost) return;
-            if (!RequireDraftMod) return;
-            if (client.AmOwner) return;
-
-            var playerInfo = GameData.Instance.GetPlayerById(client.PlayerId);
-            if (playerInfo == null) return;
-
-            string playerName = client.Data.PlayerName ?? string.Empty;
-
-            if (_verifiedClients.Contains(playerInfo.ClientId))
-            {
-                _pendingFallbacks.Remove(playerInfo.ClientId);
-                return;
-            }
-
-            bool hasMod = list.Values.Any(v =>
-                v.Contains(MOD_NAME, StringComparison.OrdinalIgnoreCase));
-
-            bool hasCorrectVersion = list.Values.Any(v =>
-                v.Contains(RequiredEntry, StringComparison.OrdinalIgnoreCase));
-
-            if (hasCorrectVersion)
-            {
-                _verifiedClients.Add(playerInfo.ClientId);
-                _pendingFallbacks.Remove(playerInfo.ClientId);
-                _modKickedPlayers.Remove(playerName);
-                DraftModePlugin.Logger.LogInfo(
-                    $"[RequireModPatch] {playerName} verified with {RequiredEntry}.");
-                return;
-            }
-
-            string reason = hasMod
-                ? $"outdated version of <b>{MOD_NAME}</b> — please update to v{PluginInfo.PLUGIN_VERSION}"
-                : $"missing <b>{MOD_NAME}</b> v{PluginInfo.PLUGIN_VERSION}";
-
-            DraftManager.SendChatLocal(
-                $"<color=#FF4444>{playerName} was kicked — {reason}.</color>");
-
-            _pendingFallbacks.Remove(playerInfo.ClientId);
-            _modKickedPlayers.Add(playerName);
-            AmongUsClient.Instance.KickPlayer(playerInfo.ClientId, false);
-
-            DraftModePlugin.Logger.LogInfo(
-                $"[RequireModPatch] Kicked {playerName} ({playerInfo.ClientId}) — {reason}.");
         }
 
         public static void ClearSession()
