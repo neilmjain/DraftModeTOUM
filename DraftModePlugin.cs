@@ -7,6 +7,8 @@ using Il2CppInterop.Runtime.Injection;
 using DraftModeTOUM.Managers;
 using DraftModeTOUM.Patches;
 using MiraAPI.PluginLoading;
+using Reactor.Networking;
+using Reactor.Networking.Attributes;
 using UnityEngine;
 
 namespace DraftModeTOUM
@@ -15,6 +17,7 @@ namespace DraftModeTOUM
     [BepInDependency("gg.reactor.api", BepInDependency.DependencyFlags.HardDependency)]
     [BepInDependency("mira.api", BepInDependency.DependencyFlags.HardDependency)]
     [BepInDependency("auavengers.tou.mira", BepInDependency.DependencyFlags.HardDependency)]
+    [ReactorModFlags(ModFlags.RequireOnAllClients)]
     public class DraftModePlugin : BasePlugin, IMiraPlugin
     {
         public static ManualLogSource Logger = null!;
@@ -45,7 +48,6 @@ namespace DraftModeTOUM
 
             _harmony = new Harmony(PluginInfo.PLUGIN_GUID);
             _harmony.PatchAll();
-            RequireModPatch.Apply(_harmony);
 
             Logger.LogInfo("DraftModeTOUM loaded successfully!");
         }
@@ -70,7 +72,6 @@ namespace DraftModeTOUM
         [HarmonyPostfix]
         public static void Postfix()
         {
-            RequireModPatch.ClearSession();
             DraftScreenController.Hide();
             DraftUiManager.CloseAll();
             DraftRecapOverlay.Hide();
