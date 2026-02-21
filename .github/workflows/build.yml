@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 name: Build DraftModeTOUM
 
 on:
@@ -36,3 +37,38 @@ jobs:
           name: DraftModeTOUM
           path: bin/Release/DraftModeTOUM.dll
           if-no-files-found: error
+=======
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build --configuration Release --no-restore
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: DraftModeTOUM
+        path: |
+          **/bin/Release/**/*.dll
+>>>>>>> db2561092809c7deaf51cfab10e6a01faa92058c

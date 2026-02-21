@@ -10,8 +10,14 @@ namespace DraftModeTOUM.Patches
     {
         SubmitPick   = 220,
         AnnounceTurn = 221,
+<<<<<<< HEAD
         StartDraft   = 223,
         Recap        = 224
+=======
+        StartDraft = 223,
+        Recap = 224,
+        SlotNotify = 225
+>>>>>>> db2561092809c7deaf51cfab10e6a01faa92058c
     }
 
     [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
@@ -29,21 +35,99 @@ namespace DraftModeTOUM.Patches
                 case DraftRpc.StartDraft:
                     if (!AmongUsClient.Instance.AmHost)
                         HandleStartDraft(reader);
+                    else
+                        ConsumeStartDraftPacket(reader);
                     return false;
 
                 case DraftRpc.AnnounceTurn:
                     if (!AmongUsClient.Instance.AmHost)
                         HandleAnnounceTurn(reader);
+                    else
+                        ConsumeAnnounceTurnPacket(reader);
                     return false;
 
                 case DraftRpc.Recap:
                     if (!AmongUsClient.Instance.AmHost)
+<<<<<<< HEAD
                         DraftManager.SendSystemMessage(reader.ReadString());
+=======
+                    {
+                        bool showRecap = reader.ReadBoolean();
+                        if (showRecap)
+                        {
+                            int count = reader.ReadInt32();
+                            var entries = new List<RecapEntry>();
+                            for (int i = 0; i < count; i++)
+                            {
+                                int slot = reader.ReadInt32();
+                                string role = reader.ReadString();
+                                entries.Add(new RecapEntry(slot, role));
+                            }
+                            DraftRecapOverlay.Show(entries);
+                        }
+
+                        // Maintain the background and trigger the exit delay
+                        DraftStatusOverlay.SetState(OverlayState.BackgroundOnly);
+                        DraftManager.Reset(cancelledBeforeCompletion: false);
+                        DraftManager.TriggerEndDraftSequence();
+                    }
+                    else
+                    {
+                        // Host safely ignores its own broadcast
+                        bool showRecap = reader.ReadBoolean();
+                        if (showRecap)
+                        {
+                            int count = reader.ReadInt32();
+                            for (int i = 0; i < count; i++)
+                            {
+                                reader.ReadInt32();
+                                reader.ReadString();
+                            }
+                        }
+                    }
+                    return false;
+
+                case DraftRpc.SlotNotify:
+                    if (!AmongUsClient.Instance.AmHost)
+                    {
+                        int count = reader.ReadInt32();
+                        var pidList = new List<byte>();
+                        var slotList = new List<int>();
+                        for (int i = 0; i < count; i++)
+                        {
+                            pidList.Add(reader.ReadByte());
+                            slotList.Add(reader.ReadInt32());
+                        }
+                        DraftManager.SetDraftStateFromHost(count, pidList, slotList);
+                        DraftUiManager.RefreshTurnList();
+                    }
+                    else
+                    {
+                        int count = reader.ReadInt32();
+                        for (int i = 0; i < count; i++) { reader.ReadByte(); reader.ReadInt32(); }
+                    }
+>>>>>>> db2561092809c7deaf51cfab10e6a01faa92058c
                     return false;
 
                 default:
                     return true;
             }
+        }
+
+        private static void ConsumeStartDraftPacket(MessageReader reader)
+        {
+            int totalSlots = reader.ReadInt32();
+            int listCount = reader.ReadInt32();
+            for (int i = 0; i < listCount; i++) { reader.ReadByte(); reader.ReadInt32(); }
+        }
+
+        private static void ConsumeAnnounceTurnPacket(MessageReader reader)
+        {
+            reader.ReadInt32(); // turnNumber
+            reader.ReadInt32(); // slot
+            reader.ReadByte();  // pickerId
+            int roleCount = reader.ReadInt32();
+            for (int i = 0; i < roleCount; i++) reader.ReadString();
         }
 
         private static void HandleStartDraft(MessageReader reader)
@@ -55,17 +139,32 @@ namespace DraftModeTOUM.Patches
             for (int i = 0; i < listCount; i++) { pids.Add(reader.ReadByte()); slots.Add(reader.ReadInt32()); }
 
             DraftManager.SetDraftStateFromHost(totalSlots, pids, slots);
+<<<<<<< HEAD
             DraftManager.SendSystemMessage("<b>DRAFT MODE ENABLED!</b>", showHeadsup: true);
+=======
+            DraftUiManager.CloseAll();
+>>>>>>> db2561092809c7deaf51cfab10e6a01faa92058c
         }
 
         private static void HandleAnnounceTurn(MessageReader reader)
         {
+<<<<<<< HEAD
             int    turnNumber = reader.ReadInt32();
             int    slot       = reader.ReadInt32();
             byte   pickerId   = reader.ReadByte();
             string[] roles    = { reader.ReadString(), reader.ReadString(), reader.ReadString() };
 
             DraftManager.SetClientTurn(turnNumber);
+=======
+            int turnNumber = reader.ReadInt32();
+            int slot = reader.ReadInt32();
+            byte pickerId = reader.ReadByte();
+            int roleCount = reader.ReadInt32();
+            var roles = new string[roleCount];
+            for (int i = 0; i < roleCount; i++) roles[i] = reader.ReadString();
+
+            DraftManager.SetClientTurn(turnNumber, slot);
+>>>>>>> db2561092809c7deaf51cfab10e6a01faa92058c
             DisplayTurnAnnouncement(slot, pickerId, roles);
         }
 
@@ -78,6 +177,7 @@ namespace DraftModeTOUM.Patches
         {
             if (PlayerControl.LocalPlayer.PlayerId == pickerId)
             {
+<<<<<<< HEAD
                 // Show the UI pick screen
                 DraftScreenController.Show(roles);
 
@@ -91,6 +191,13 @@ namespace DraftModeTOUM.Patches
                 // Close any lingering screen and show a system message to spectators
                 DraftScreenController.Hide();
                 DraftManager.SendSystemMessage($"Player {slot} is picking their role...");
+=======
+                DraftUiManager.ShowPicker(roles.ToList());
+            }
+            else
+            {
+                DraftUiManager.CloseAll();
+>>>>>>> db2561092809c7deaf51cfab10e6a01faa92058c
             }
         }
     }
@@ -99,6 +206,8 @@ namespace DraftModeTOUM.Patches
     {
         public static void SendPickToHost(int index)
         {
+            DraftUiManager.CloseAll();
+
             if (AmongUsClient.Instance.AmHost)
             {
                 DraftManager.SubmitPick(PlayerControl.LocalPlayer.PlayerId, index);
@@ -118,7 +227,10 @@ namespace DraftModeTOUM.Patches
         public static void BroadcastDraftStart(int totalSlots, List<byte> pids, List<int> slots)
         {
             DraftManager.SetDraftStateFromHost(totalSlots, pids, slots);
+<<<<<<< HEAD
             DraftManager.SendSystemMessage("<b>DRAFT MODE ENABLED!</b>", showHeadsup: true);
+=======
+>>>>>>> db2561092809c7deaf51cfab10e6a01faa92058c
 
             var writer = AmongUsClient.Instance.StartRpcImmediately(
                 PlayerControl.LocalPlayer.NetId,
@@ -143,20 +255,56 @@ namespace DraftModeTOUM.Patches
             writer.Write(turnNumber);
             writer.Write(slot);
             writer.Write(playerId);
+            writer.Write(roles.Count);
             foreach (var r in roles) writer.Write(r);
             AmongUsClient.Instance.FinishRpcImmediately(writer);
         }
 
-        public static void BroadcastRecap(string recapText)
+        public static void BroadcastSlotNotifications(Dictionary<byte, int> pidToSlot)
         {
+<<<<<<< HEAD
             DraftManager.SendSystemMessage(recapText);
+=======
+            var writer = AmongUsClient.Instance.StartRpcImmediately(
+                PlayerControl.LocalPlayer.NetId,
+                (byte)DraftRpc.SlotNotify,
+                Hazel.SendOption.Reliable,
+                -1);
+            writer.Write(pidToSlot.Count);
+            foreach (var kvp in pidToSlot)
+            {
+                writer.Write(kvp.Key);
+                writer.Write(kvp.Value);
+            }
+            AmongUsClient.Instance.FinishRpcImmediately(writer);
+        }
+
+        public static void BroadcastRecap(List<RecapEntry> entries, bool showRecap)
+        {
+            // Show it locally for the host
+            if (showRecap)
+            {
+                DraftRecapOverlay.Show(entries);
+            }
+>>>>>>> db2561092809c7deaf51cfab10e6a01faa92058c
 
             var writer = AmongUsClient.Instance.StartRpcImmediately(
                 PlayerControl.LocalPlayer.NetId,
                 (byte)DraftRpc.Recap,
                 Hazel.SendOption.Reliable,
                 -1);
-            writer.Write(recapText);
+
+            writer.Write(showRecap);
+            if (showRecap)
+            {
+                writer.Write(entries.Count);
+                foreach (var entry in entries)
+                {
+                    writer.Write(entry.SlotNumber);
+                    writer.Write(entry.RoleName);
+                }
+            }
+
             AmongUsClient.Instance.FinishRpcImmediately(writer);
         }
     }
