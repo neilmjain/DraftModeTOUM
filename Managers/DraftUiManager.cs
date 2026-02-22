@@ -110,16 +110,20 @@ namespace DraftModeTOUM.Managers
             DraftNetworkHelper.SendPickToHost(index);
         }
 
-        private static List<DraftRoleCard> BuildCards(List<string> roles)
+        /// <summary>
+        /// Builds DraftRoleCard list from a list of role name strings sent by the host.
+        /// Used by both the Circle UI and the Card UI.
+        /// </summary>
+        public static List<DraftRoleCard> BuildCards(List<string> roles)
         {
             var cards = new List<DraftRoleCard>();
             for (int i = 0; i < roles.Count; i++)
             {
                 string roleName = roles[i];
                 var role = FindRoleByName(roleName);
-                string team = role != null ? MiscUtils.GetParsedRoleAlignment(role) : "Unknown";
+                string team = GetTeamLabel(role, roleName);
                 var icon = GetRoleIcon(role);
-                var color = GetRoleColor(role);
+                var color = GetRoleColor(role, roleName);
                 cards.Add(new DraftRoleCard(roleName, team, icon, color, i));
             }
             if (DraftManager.ShowRandomOption)
@@ -127,27 +131,62 @@ namespace DraftModeTOUM.Managers
             return cards;
         }
 
-        private static RoleBehaviour? FindRoleByName(string roleName)
+        /// <summary>
+        /// Finds a RoleBehaviour by matching against both NiceName and GetRoleName(),
+        /// after normalizing both sides. This handles mismatches between what the host
+        /// sends (GetRoleName) and what the client has (NiceName).
+        /// </summary>
+        public static RoleBehaviour? FindRoleByName(string roleName)
         {
             if (RoleManager.Instance == null) return null;
             string normalized = Normalize(roleName);
-            return RoleManager.Instance.AllRoles.ToArray()
-                .FirstOrDefault(r => Normalize(r.NiceName) == normalized);
+            return RoleManager.Instance.AllRoles.ToArray().FirstOrDefault(r =>
+            {
+                if (r == null) return false;
+                if (Normalize(r.NiceName) == normalized) return true;
+                try { if (Normalize(r.GetRoleName()) == normalized) return true; } catch { }
+                return false;
+            });
         }
 
-        private static Sprite? GetRoleIcon(RoleBehaviour? role)
+        /// <summary>
+        /// Gets the faction label string for a role. Falls back to RoleCategory lookup
+        /// by name string if the role object is null (i.e. lookup failed).
+        /// </summary>
+        public static string GetTeamLabel(RoleBehaviour? role, string roleName)
+        {
+            if (role != null)
+            {
+                try { return MiscUtils.GetParsedRoleAlignment(role); } catch { }
+            }
+
+            // Fallback: use our hardcoded faction map by name
+            return RoleCategory.GetFaction(roleName) switch
+            {
+                RoleFaction.Impostor      => "Impostor",
+                RoleFaction.NeutralKilling => "Neutral Killing",
+                RoleFaction.Neutral        => "Neutral",
+                _                          => "Crewmate"
+            };
+        }
+
+        public static Sprite? GetRoleIcon(RoleBehaviour? role)
         {
             if (role is ICustomRole cr && cr.Configuration.Icon != null)
-                return cr.Configuration.Icon.LoadAsset();
+            {
+                try { return cr.Configuration.Icon.LoadAsset(); } catch { }
+            }
             if (role?.RoleIconSolid != null)
                 return role.RoleIconSolid;
-            return TouRoleIcons.RandomAny.LoadAsset();
+            return null; // caller decides fallback
         }
 
-        private static Color GetRoleColor(RoleBehaviour? role)
+        public static Color GetRoleColor(RoleBehaviour? role, string roleName)
         {
             if (role is ICustomRole cr) return cr.RoleColor;
-            return role != null ? role.TeamColor : Color.white;
+            if (role != null) return role.TeamColor;
+            // Fallback to our color map
+            return RoleColors.GetColor(roleName);
         }
 
         private static string Normalize(string s) =>

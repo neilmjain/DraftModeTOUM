@@ -163,14 +163,24 @@ namespace DraftModeTOUM
             float row0Y = hasSecondRow ? rowGap * 0.20f : -0.05f;
             float row1Y = row0Y - rowGap;
 
+            // Build the shared card data once using the same pipeline as the circle UI.
+            // This ensures role lookup, team labels, icons, and colors are all consistent.
+            var roleList = new System.Collections.Generic.List<string>();
+            if (_offeredRoles != null)
+                roleList.AddRange(_offeredRoles);
+            var cards = DraftUiManager.BuildCards(roleList);
+
             for (int i = 0; i < totalCards; i++)
             {
                 int idx = i;
                 bool isRandom = showRandom && (i == offeredCount);
-                string roleName = isRandom
-                    ? "Random"
-                    : (_offeredRoles != null && i < _offeredRoles.Length ? _offeredRoles[i] : "?");
-                Color color = isRandom ? Color.white : RoleColors.GetColor(roleName);
+
+                // Pull pre-resolved data from the card
+                DraftRoleCard card = i < cards.Count ? cards[i] : null;
+                string roleName = card?.RoleName ?? (isRandom ? "Random" : "?");
+                Color color    = card?.Color    ?? Color.white;
+                string team    = card?.TeamName ?? (isRandom ? "Any" : "Unknown");
+                Sprite icon    = card?.Icon     ?? TouRoleIcons.RandomAny.LoadAsset();
 
                 bool inRow1 = i >= row0Count;
                 int colIdx = inRow1 ? i - row0Count : i;
@@ -188,12 +198,18 @@ namespace DraftModeTOUM
                 newRoleObj.SetActive(true);
                 newRoleObj.name = $"DraftCard_{i}_{roleName}";
 
-                var roleText = actualCard.GetChild(0).GetComponent<TextMeshPro>();
+                var roleText  = actualCard.GetChild(0).GetComponent<TextMeshPro>();
                 var roleImage = actualCard.GetChild(1).GetComponent<SpriteRenderer>();
-                var teamText = actualCard.GetChild(2).GetComponent<TextMeshPro>();
+                var teamText  = actualCard.GetChild(2).GetComponent<TextMeshPro>();
 
-                if (roleText != null) { roleText.text = roleName; roleText.color = color; }
-                if (teamText != null) { teamText.text = isRandom ? "Any" : GetFactionLabel(roleName); teamText.color = color; }
+                if (roleText  != null) { roleText.text  = roleName; roleText.color  = color; }
+                if (teamText  != null) { teamText.text  = team;     teamText.color  = color; }
+                if (roleImage != null)
+                {
+                    roleImage.sprite = icon;
+                    // Ensure icon doesn't inherit a stale transform scale from the prefab
+                    roleImage.transform.localScale = Vector3.one * 0.4f;
+                }
 
                 var cardBgSr = actualCard.GetComponent<SpriteRenderer>();
                 if (cardBgSr != null)
@@ -204,11 +220,6 @@ namespace DraftModeTOUM
 
                 AddGlow(newRoleObj, color, scale: 1.18f, alpha: 0.35f, z: 0.8f, sortOrder: 10000);
                 AddGlow(newRoleObj, color, scale: 1.32f, alpha: 0.15f, z: 1.2f, sortOrder: 10000);
-
-                if (roleImage != null)
-                    roleImage.sprite = isRandom
-                        ? TouRoleIcons.RandomAny.LoadAsset()
-                        : TryGetRoleSprite(roleName) ?? roleImage.sprite;
 
                 var btn = actualCard.GetComponent<PassiveButton>();
                 if (btn != null)
@@ -289,28 +300,6 @@ namespace DraftModeTOUM
 
         private void DestroySelf() => Hide();
 
-        private static Sprite TryGetRoleSprite(string roleName)
-        {
-            try
-            {
-                if (RoleManager.Instance == null) return null;
-                string norm = roleName.Replace(" ", "").ToLowerInvariant();
-                foreach (var role in RoleManager.Instance.AllRoles)
-                {
-                    if (role == null) continue;
-                    if ((role.NiceName ?? "").Replace(" ", "").ToLowerInvariant() != norm) continue;
-
-                    if (role is MiraAPI.Roles.ICustomRole cr && cr.Configuration.Icon != null)
-                        return cr.Configuration.Icon.LoadAsset();
-
-                    if (role.RoleIconSolid != null)
-                        return role.RoleIconSolid;
-                }
-            }
-            catch { }
-            return null;
-        }
-
         private static void AddGlow(GameObject parent, Color color, float scale, float alpha, float z, int sortOrder)
         {
             var go = new GameObject("Glow");
@@ -336,13 +325,5 @@ namespace DraftModeTOUM
             _white = Sprite.Create(tex, new Rect(0, 0, 4, 4), new Vector2(0.5f, 0.5f), 4f);
             return _white;
         }
-
-        private static string GetFactionLabel(string roleName) =>
-            RoleCategory.GetFaction(roleName) switch
-            {
-                RoleFaction.Impostor => "Impostor",
-                RoleFaction.Neutral => "Neutral",
-                _ => "Crewmate"
-            };
     }
 }
