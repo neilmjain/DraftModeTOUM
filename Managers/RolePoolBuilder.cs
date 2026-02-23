@@ -44,7 +44,9 @@ namespace DraftModeTOUM.Managers
 
                 foreach (var roleName in GetAllRoles())
                 {
-                    AddRole(pool, roleName, 1, 100, RoleCategory.GetFaction(roleName));
+                    // Fallback list has no live RoleBehaviour — pass null.
+                    // Faction comes from the static RoleCategory table which uses canonical keys.
+                    AddRole(pool, roleName, null!, 1, 100, RoleCategory.GetFaction(roleName));
                 }
             }
 

@@ -6,6 +6,7 @@ using MiraAPI.LocalSettings;
 using MiraAPI.Roles;
 using MiraAPI.Utilities;
 using TownOfUs.Assets;
+using TownOfUs.Modules.Localization;
 using TownOfUs.Utilities;
 using UnityEngine;
 
