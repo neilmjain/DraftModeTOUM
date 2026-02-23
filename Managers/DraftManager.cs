@@ -176,6 +176,8 @@ namespace DraftModeTOUM.Managers
             // Classic-mode budget (not used in Role List mode)
             if (!_isRoleListMode)
                 BuildRemainingSlots();
+            else
+                ComputeRoleListFactionQuotas();
 
             DraftNetworkHelper.BroadcastDraftStart(totalSlots, syncPids, syncSlots);
             NotifyPlayersOfSlots();
@@ -219,6 +221,9 @@ namespace DraftModeTOUM.Managers
             _impostorsDrafted       = 0;
             _neutralKillingsDrafted = 0;
             _neutralPassivesDrafted = 0;
+            _totalImpSlotsInList      = 0;
+            _totalNeutKillSlotsInList = 0;
+            _totalNeutSlotsInList     = 0;
 
             if (cancelledBeforeCompletion)
                 UpCommandRequests.Clear();
@@ -304,14 +309,77 @@ namespace DraftModeTOUM.Managers
             return new DraftSlot(RoleListOption.Any, _lobbyRolePool.ToList());
         }
 
+        // ── Role List mode: total imp/neut/crew slots in the list ─────────────
+        private static int _totalImpSlotsInList   = 0;
+        private static int _totalNeutKillSlotsInList = 0;
+        private static int _totalNeutSlotsInList  = 0;
+
+        /// <summary>
+        /// Pre-computes how many imp / neutral-killing / neutral slots exist
+        /// in the full turn slot list. Called once when the draft starts.
+        /// </summary>
+        private static void ComputeRoleListFactionQuotas()
+        {
+            _totalImpSlotsInList      = 0;
+            _totalNeutKillSlotsInList = 0;
+            _totalNeutSlotsInList     = 0;
+
+            foreach (var slot in _turnSlots)
+            {
+                bool hasImp  = slot.ValidRoles.Any(r =>
+                    _roleFactions.TryGetValue(r, out var f) && f == RoleFaction.Impostor);
+                bool hasNK   = slot.ValidRoles.Any(r =>
+                    _roleFactions.TryGetValue(r, out var f) && f == RoleFaction.NeutralKilling);
+                bool hasNeut = slot.ValidRoles.Any(r =>
+                    _roleFactions.TryGetValue(r, out var f) && f == RoleFaction.Neutral);
+
+                if (hasImp)  _totalImpSlotsInList++;
+                if (hasNK)   _totalNeutKillSlotsInList++;
+                if (hasNeut) _totalNeutSlotsInList++;
+            }
+
+            DraftModePlugin.Logger.LogInfo(
+                $"[DraftManager] Role List quotas — Imp:{_totalImpSlotsInList}  " +
+                $"NK:{_totalNeutKillSlotsInList}  Neut:{_totalNeutSlotsInList}");
+        }
+
         /// <summary>
         /// Returns enabled roles for a slot that haven't been exhausted yet.
-        /// A role is exhausted when it's been picked as many times as its MaxCount.
+        /// In Role List mode a role faction is considered exhausted only when
+        /// as many players have drafted it as there are slots for that faction
+        /// in the full role list — NOT based on vanilla per-role MaxCount.
         /// </summary>
         private static List<string> GetAvailableRolesForSlot(DraftSlot slot)
         {
             return slot.ValidRoles
-                .Where(r => _lobbyRolePool.Contains(r) && GetDraftedCount(r) < GetMaxCount(r))
+                .Where(r =>
+                {
+                    if (!_lobbyRolePool.Contains(r)) return false;
+
+                    // Per-role hard cap (e.g. Ambusher set to 1 in settings).
+                    // We still respect this so the same specific role isn't
+                    // drafted more times than its setting allows.
+                    if (GetDraftedCount(r) >= GetMaxCount(r)) return false;
+
+                    // Faction-level cap: only suppress a faction's roles once
+                    // as many players have already chosen that faction as there
+                    // are slots for it in the role list.
+                    if (!_roleFactions.TryGetValue(r, out var faction)) return true;
+
+                    if (faction == RoleFaction.Impostor &&
+                        _impostorsDrafted >= _totalImpSlotsInList)
+                        return false;
+
+                    if (faction == RoleFaction.NeutralKilling &&
+                        _neutralKillingsDrafted >= _totalNeutKillSlotsInList)
+                        return false;
+
+                    if (faction == RoleFaction.Neutral &&
+                        _neutralPassivesDrafted >= _totalNeutSlotsInList)
+                        return false;
+
+                    return true;
+                })
                 .ToList();
         }
 
@@ -337,27 +405,54 @@ namespace DraftModeTOUM.Managers
             DraftNetworkHelper.SendTurnAnnouncement(state.SlotNumber, state.PlayerId, state.OfferedRoles, CurrentTurn);
         }
 
+        // Chance (0–100) that a second bucket card appears alongside the first.
+        // 15% feels rare enough to be exciting.
+        private const int SecondFactionCardChance = 15;
+
         private static List<string> BuildOffersForRoleListMode()
         {
-            int target      = OfferedRolesCount;
-            var slot        = GetSlotForCurrentTurn();
-            var available   = GetAvailableRolesForSlot(slot);
+            int target    = OfferedRolesCount;
+            var slot      = GetSlotForCurrentTurn();
+            var available = GetAvailableRolesForSlot(slot);
 
+            // No roles in this bucket at all — single Crewmate safety net.
             if (available.Count == 0)
             {
-                // No valid roles left in this bucket — pad with Crewmate
-                return Enumerable.Repeat("Crewmate", target).ToList();
+                DraftModePlugin.Logger.LogInfo(
+                    $"[DraftManager] Turn {CurrentTurn} bucket={slot.Bucket} — empty, offering Crewmate");
+                return new List<string> { "Crewmate" };
             }
 
-            // Pick up to 'target' unique roles from the valid set for this slot
-            var offered = PickWeightedUnique(available, target);
+            var offered = new List<string>();
 
-            // Pad with Crewmate if we couldn't fill all slots
-            while (offered.Count < target)
-                offered.Add("Crewmate");
+            // 1. Always give exactly 1 card from the bucket.
+            offered.AddRange(PickWeightedUnique(available, 1));
+
+            // 2. Rarely give a second bucket card (15% chance).
+            if (target >= 2 && available.Count > 1
+                && UnityEngine.Random.Range(0, 100) < SecondFactionCardChance)
+            {
+                var secondPool = available
+                    .Where(r => !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase)))
+                    .ToList();
+                if (secondPool.Count > 0)
+                    offered.AddRange(PickWeightedUnique(secondPool, 1));
+            }
+
+            // 3. Fill remaining slots with MORE bucket roles — strictly no cross-bucket filler.
+            //    If the bucket doesn't have enough roles to fill all slots, just show fewer cards.
+            int remaining = target - offered.Count;
+            if (remaining > 0 && available.Count > offered.Count)
+            {
+                var extras = PickWeightedUnique(
+                    available.Where(r => !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase))).ToList(),
+                    remaining);
+                offered.AddRange(extras);
+            }
 
             DraftModePlugin.Logger.LogInfo(
-                $"[DraftManager] Turn {CurrentTurn} bucket={slot.Bucket} valid={available.Count} offered={offered.Count}");
+                $"[DraftManager] Turn {CurrentTurn} bucket={slot.Bucket} " +
+                $"bucketAvail={available.Count} offered={offered.Count}");
 
             return offered;
         }
