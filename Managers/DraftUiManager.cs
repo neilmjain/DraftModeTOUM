@@ -115,24 +115,60 @@ namespace DraftModeTOUM.Managers
             var cards = new List<DraftRoleCard>();
             for (int i = 0; i < roles.Count; i++)
             {
-                string roleName = roles[i];
-                var role = FindRoleByName(roleName);
+                string canonicalKey = roles[i]; // always a LocaleKey now, e.g. "SoulCollector"
+                var role = FindRoleByCanonicalKey(canonicalKey);
+
+                // Display name: use TOU's own locale system so it shows "Soul Collector"
+                // in the player's language, but is NOT affected by name-change mods because
+                // we're reading from the key, not from role.NiceName / role.RoleName.
+                string displayName = GetDisplayName(canonicalKey, role);
                 string team = role != null ? MiscUtils.GetParsedRoleAlignment(role) : "Unknown";
                 var icon = GetRoleIcon(role);
                 var color = GetRoleColor(role);
-                cards.Add(new DraftRoleCard(roleName, team, icon, color, i));
+                cards.Add(new DraftRoleCard(displayName, team, icon, color, i));
             }
             if (DraftManager.ShowRandomOption)
                 cards.Add(new DraftRoleCard("Random", "Random", TouRoleIcons.RandomAny.LoadAsset(), Color.white, roles.Count));
             return cards;
         }
 
-        private static RoleBehaviour? FindRoleByName(string roleName)
+
+        private static RoleBehaviour? FindRoleByCanonicalKey(string canonicalKey)
         {
             if (RoleManager.Instance == null) return null;
-            string normalized = Normalize(roleName);
-            return RoleManager.Instance.AllRoles.ToArray()
-                .FirstOrDefault(r => Normalize(r.NiceName) == normalized);
+
+            // Fastest path: the pool already built a lookup table for us.
+            var state = DraftManager.GetCurrentPickerState();
+            // Pool lookup lives on DraftManager via the stored pool reference exposed below.
+            var poolRole = DraftManager.FindRoleInPool(canonicalKey);
+            if (poolRole != null) return poolRole;
+
+            // Fallback: scan all registered roles by canonical key.
+            return MiscUtils.AllRegisteredRoles
+                .FirstOrDefault(r => RolePoolBuilder.GetCanonicalName(r)
+                    .Equals(canonicalKey, System.StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static string GetDisplayName(string canonicalKey, RoleBehaviour? role)
+        {
+            // Try TOU locale first — most reliable and translation-aware.
+            try
+            {
+                var locKey = $"TouRole{canonicalKey}";
+                var localized = TouLocale.Get(locKey);
+                if (!string.IsNullOrWhiteSpace(localized) && localized != locKey)
+                    return localized;
+            }
+            catch { }
+
+            // If the role object is available, use its canonical locale key as display
+            // (still not going through NiceName / GetRoleName).
+            if (role is TownOfUs.Roles.ITownOfUsRole touRole)
+                return touRole.LocaleKey;
+
+            // Last resort: make the canonical key human-readable ("SoulCollector" -> "Soul Collector").
+            return System.Text.RegularExpressions.Regex
+                .Replace(canonicalKey, "([A-Z])", " $1").Trim();
         }
 
         private static Sprite? GetRoleIcon(RoleBehaviour? role)

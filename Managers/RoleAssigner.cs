@@ -66,7 +66,8 @@ namespace DraftModeTOUM.Managers
                 case "politician": Set(player, typeof(PoliticianRole)); return;
                 case "prosecutor": Set(player, typeof(ProsecutorRole)); return;
                 case "swapper": Set(player, typeof(SwapperRole)); return;
-                case "timelord": Set(player, typeof(TimeLordRole)); return;
+                case "timelord":
+                case "time lord": Set(player, typeof(TimeLordRole)); return;
 
                 // ── Crew Protective ─────────────────────────────
                 case "altruist": Set(player, typeof(AltruistRole)); return;
@@ -77,7 +78,8 @@ namespace DraftModeTOUM.Managers
                 case "warden": Set(player, typeof(WardenRole)); return;
 
                 // ── Crew Support ────────────────────────────────
-                case "engineer": Set(player, typeof(EngineerRole)); return;
+                case "engineer":
+                case "engineertou": Set(player, typeof(EngineerTouRole)); return;
                 case "imitator": Set(player, typeof(ImitatorRole)); return;
                 case "medium": Set(player, typeof(MediumRole)); return;
                 case "plumber": Set(player, typeof(PlumberRole)); return;

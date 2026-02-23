@@ -4,6 +4,7 @@ using System.Linq;
 using AmongUs.GameOptions;
 using MiraAPI.Roles;
 using MiraAPI.Utilities;
+using TownOfUs.Roles;
 using TownOfUs.Utilities;
 
 namespace DraftModeTOUM.Managers
@@ -14,6 +15,10 @@ namespace DraftModeTOUM.Managers
         public Dictionary<string, int> MaxCounts { get; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, int> Weights { get; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, RoleFaction> Factions { get; } = new Dictionary<string, RoleFaction>(StringComparer.OrdinalIgnoreCase);
+
+        // Maps canonical locale key → RoleBehaviour so we can look up the role
+        // for icons/colours without going through the (potentially renamed) NiceName.
+        public Dictionary<string, RoleBehaviour> RoleLookup { get; } = new Dictionary<string, RoleBehaviour>(StringComparer.OrdinalIgnoreCase);
     }
 
     public static class RolePoolBuilder
@@ -68,22 +73,68 @@ namespace DraftModeTOUM.Managers
                         continue;
                 }
 
+                // Use the canonical LocaleKey (e.g. "SoulCollector") as the role identifier.
+                // This is immune to name-change mods because it never goes through the
+                // localization / RoleName property that name-change mods override.
+                string canonicalName = GetCanonicalName(role);
+
                 // Hard-banned roles — never appear in draft regardless of settings
-                var rn = role.NiceName ?? "";
-                if (IsBannedRole(rn)) continue;
+                if (IsBannedRole(canonicalName)) continue;
 
                 int count = roleOptions.GetNumPerGame(role.Role);
                 int chance = roleOptions.GetChancePerGame(role.Role);
                 if (count <= 0 || chance <= 0) continue;
 
-                var roleName = role.GetRoleName();
-                // Use RoleCategory for neutrals so killing vs passive is correctly split
-                var faction = role.IsImpostor()
-                    ? RoleFaction.Impostor
-                    : (role.IsNeutral() ? RoleCategory.GetFaction(roleName) : RoleFaction.Crewmate);
+                // Determine faction directly from the role object — never from the name string.
+                var faction = GetFactionFromRole(role);
 
-                AddRole(pool, roleName, count, chance, faction);
+                AddRole(pool, canonicalName, role, count, chance, faction);
             }
+        }
+
+        /// <summary>
+        /// Returns the canonical name for a role that is stable regardless of locale or
+        /// name-change mods.  For TOU roles this is ITownOfUsRole.LocaleKey (e.g. "SoulCollector").
+        /// For everything else we fall back to the C# type name, which is also stable.
+        /// </summary>
+        public static string GetCanonicalName(RoleBehaviour role)
+        {
+            if (role is ITownOfUsRole touRole)
+                return touRole.LocaleKey;
+
+            // Fallback: strip the "Role" suffix from the type name (e.g. "SheriffRole" → "Sheriff")
+            var typeName = role.GetType().Name;
+            if (typeName.EndsWith("Role", StringComparison.OrdinalIgnoreCase))
+                typeName = typeName[..^4];
+            return typeName;
+        }
+
+        /// <summary>
+        /// Determines the draft faction for a role purely from the role object —
+        /// never from a potentially-renamed name string.
+        /// </summary>
+        private static RoleFaction GetFactionFromRole(RoleBehaviour role)
+        {
+            if (role is ITownOfUsRole touRole)
+            {
+                return touRole.RoleAlignment switch
+                {
+                    RoleAlignment.NeutralKilling => RoleFaction.NeutralKilling,
+                    RoleAlignment.NeutralBenign or
+                    RoleAlignment.NeutralEvil or
+                    RoleAlignment.NeutralOutlier => RoleFaction.Neutral,
+                    RoleAlignment.ImpostorConcealing or
+                    RoleAlignment.ImpostorKilling or
+                    RoleAlignment.ImpostorPower or
+                    RoleAlignment.ImpostorSupport => RoleFaction.Impostor,
+                    _ => RoleFaction.Crewmate
+                };
+            }
+
+            // Vanilla/unknown — use the IsImpostor / IsNeutral helpers
+            if (role.IsImpostor()) return RoleFaction.Impostor;
+            if (role.IsNeutral())  return RoleFaction.Neutral;
+            return RoleFaction.Crewmate;
         }
 
         // Roles that can never be drafted no matter what the host configures
@@ -94,7 +145,7 @@ namespace DraftModeTOUM.Managers
 
         public static bool IsBannedRole(string roleName) => _bannedRoles.Contains(roleName);
 
-        private static void AddRole(DraftRolePool pool, string roleName, int maxCount, int weight, RoleFaction faction)
+        private static void AddRole(DraftRolePool pool, string roleName, RoleBehaviour role, int maxCount, int weight, RoleFaction faction)
         {
             if (string.IsNullOrWhiteSpace(roleName)) return;
             if (!pool.MaxCounts.ContainsKey(roleName))
@@ -103,6 +154,7 @@ namespace DraftModeTOUM.Managers
                 pool.MaxCounts[roleName] = Math.Max(1, maxCount);
                 pool.Weights[roleName] = Math.Max(1, weight);
                 pool.Factions[roleName] = faction;
+                pool.RoleLookup[roleName] = role;
             }
             else
             {
@@ -113,20 +165,21 @@ namespace DraftModeTOUM.Managers
 
         private static IEnumerable<string> GetAllRoles()
         {
+            // These are canonical LocaleKey values — stable regardless of locale or name-change mods.
             return new[]
             {
                 "Aurial","Forensic","Lookout","Mystic","Seer",
-                "Snitch","Sonar","Trapper", "Deputy", "Sheriff",
-                "Veteran","Vigilante", "Jailor","Monarch","Politician",
-                "Prosecutor","Swapper","Time Lord", "Altruist","Cleric","Medic",
-                "Mirrorcaster","Oracle","Warden", "Engineer","Imitator","Medium",
-                "Plumber","Sentry","Transporter", "Eclipsal","Escapist","Grenadier",
-                "Morphling","Swooper","Venerer", "Ambusher","Bomber","Parasite",
-                "Scavenger","Warlock", "Ambassador","Puppeteer","Spellslinger",
+                "Snitch","Sonar","Trapper","Deputy","Sheriff",
+                "Veteran","Vigilante","Jailor","Monarch","Politician",
+                "Prosecutor","Swapper","TimeLord","Altruist","Cleric","Medic",
+                "Mirrorcaster","Oracle","Warden","EngineerTou","Imitator","Medium",
+                "Plumber","Sentry","Transporter","Eclipsal","Escapist","Grenadier",
+                "Morphling","Swooper","Venerer","Ambusher","Bomber","Parasite",
+                "Scavenger","Warlock","Ambassador","Puppeteer","Spellslinger",
                 "Blackmailer","Hypnotist","Janitor","Miner","Undertaker",
-                "Fairy","Mercenary","Survivor", "Doomsayer","Executioner","Jester",
+                "Fairy","Mercenary","Survivor","Doomsayer","Executioner","Jester",
                 "Arsonist","Glitch","Juggernaut","Plaguebearer",
-                "SoulCollector","Vampire","Werewolf", "Chef","Inquisitor"
+                "SoulCollector","Vampire","Werewolf","Chef","Inquisitor"
             };
         }
     }
