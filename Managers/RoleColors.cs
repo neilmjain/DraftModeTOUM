@@ -92,9 +92,12 @@ namespace DraftModeTOUM.Managers
                 // Fallback by faction
                 _ => RoleCategory.GetFaction(roleName) switch
                 {
-                    RoleFaction.Impostor => ImpostorFallback,
-                    RoleFaction.Neutral  => NeutralFallback,
-                    _                    => CrewFallback
+                    RoleFaction.Impostor        => ImpostorFallback,
+                    RoleFaction.NeutralKilling  => NeutralFallback,
+                    RoleFaction.NeutralBenign   => NeutralFallback,
+                    RoleFaction.NeutralEvil     => NeutralFallback,
+                    RoleFaction.NeutralOutlier  => NeutralFallback,
+                    _                           => CrewFallback
                 }
             };
         }

@@ -8,18 +8,15 @@ using MiraAPI.Utilities;
 using TownOfUs.Options;
 using TownOfUs.Roles;
 using TownOfUs.Utilities;
+using UnityEngine;
 
 namespace DraftModeTOUM.Managers
 {
-    // ─────────────────────────────────────────────────────────────────────────
-    // DraftSlot — represents one player's draft slot when Role List mode is on.
-    // The SlotBucket tells us what kind of roles are valid for that slot.
-    // ─────────────────────────────────────────────────────────────────────────
+    // DraftSlot kept as a stub so any remaining DraftManager references compile.
     public sealed class DraftSlot
     {
-        public RoleListOption Bucket { get; }
-        public List<string>   ValidRoles { get; }   // canonical locale keys
-
+        public RoleListOption Bucket    { get; }
+        public List<string>   ValidRoles { get; }
         public DraftSlot(RoleListOption bucket, List<string> validRoles)
         {
             Bucket     = bucket;
@@ -29,320 +26,162 @@ namespace DraftModeTOUM.Managers
 
     public sealed class DraftRolePool
     {
-        // ── Classic / vanilla mode fields ────────────────────────────────────
-        public List<string> Roles { get; } = new List<string>();
-        public Dictionary<string, int>          MaxCounts  { get; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        public Dictionary<string, int>          Weights    { get; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        public Dictionary<string, RoleFaction>  Factions   { get; } = new Dictionary<string, RoleFaction>(StringComparer.OrdinalIgnoreCase);
-        public Dictionary<string, RoleBehaviour> RoleLookup { get; } = new Dictionary<string, RoleBehaviour>(StringComparer.OrdinalIgnoreCase);
+        // ── Flat role data ────────────────────────────────────────────────────
+        public List<string>                      Roles      { get; } = new();
+        public Dictionary<string, int>           MaxCounts  { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, int>           Weights    { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, RoleFaction>   Factions   { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, RoleBehaviour> RoleLookup { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-        // ── Role List mode fields ────────────────────────────────────────────
-        /// <summary>True when TOU's Role Assignment Type is set to "Role List".</summary>
-        public bool IsRoleListMode { get; set; }
+        public bool            IsRoleListMode { get; set; } = false;
+        public List<DraftSlot> Slots          { get; } = new();
 
-        /// <summary>
-        /// One entry per player slot (index 0 = first player to draft).
-        /// Only populated when IsRoleListMode is true.
-        /// </summary>
-        public List<DraftSlot> Slots { get; } = new List<DraftSlot>();
+        // ── Faction caps ──────────────────────────────────────────────────────
+        public int MaxImpostors       { get; set; } = 2;
+        public int MaxNeutralKillings { get; set; } = 1;
+        public int MaxNeutralBenign   { get; set; } = 1;
+        public int MaxNeutralEvil     { get; set; } = 1;
+        public int MaxNeutralOutlier  { get; set; } = 1;
+
+        // ── Per-seat chances ──────────────────────────────────────────────────
+        public float[] ImpSeatChances         { get; set; } = Array.Empty<float>();
+        public float[] NeutKillSeatChances    { get; set; } = Array.Empty<float>();
+        public float[] NeutBenignSeatChances  { get; set; } = Array.Empty<float>();
+        public float[] NeutEvilSeatChances    { get; set; } = Array.Empty<float>();
+        public float[] NeutOutlierSeatChances { get; set; } = Array.Empty<float>();
+
+        // ── Crew sub-category chances (global, not per-seat) ──────────────────
+        public float CrewInvestigativeChance { get; set; } = 70f;
+        public float CrewKillingChance       { get; set; } = 70f;
+        public float CrewPowerChance         { get; set; } = 70f;
+        public float CrewProtectiveChance    { get; set; } = 70f;
+        public float CrewSupportChance       { get; set; } = 70f;
+
+        // Legacy shim so DraftManager compiles without changes
+        [Obsolete("Use MaxNeutralBenign/Evil/Outlier instead")]
+        public int MaxNeutralOther => MaxNeutralBenign + MaxNeutralEvil + MaxNeutralOutlier;
+        [Obsolete("Use NeutBenign/Evil/OutlierSeatChances instead")]
+        public float[] NeutOtherSeatChances => NeutBenignSeatChances;
     }
 
     public static class RolePoolBuilder
     {
-        // ─────────────────────────────────────────────────────────────────────
-        // Entry point
-        // ─────────────────────────────────────────────────────────────────────
         public static DraftRolePool BuildPool()
         {
             var pool = new DraftRolePool();
 
             try
             {
-                // Check if TOU's Role List mode is active
-                var roleOpts = OptionGroupSingleton<RoleOptions>.Instance;
-                var distribution = roleOpts?.CurrentRoleDistribution() ?? RoleDistribution.Vanilla;
+                BuildFromRoleOptions(pool);
+                LoadFactionSettings(pool);
 
-                if (distribution == RoleDistribution.RoleList)
-                {
-                    pool.IsRoleListMode = true;
-                    BuildFromRoleList(pool, roleOpts!);
-                    DraftModePlugin.Logger.LogInfo(
-                        $"[RolePoolBuilder] Role List mode — {pool.Slots.Count} slots built");
-                }
-                else
-                {
-                    pool.IsRoleListMode = false;
-                    BuildFromRoleOptions(pool);
-                    DraftModePlugin.Logger.LogInfo(
-                        $"[RolePoolBuilder] Classic mode — {pool.Roles.Count} enabled roles");
-                }
+                DraftModePlugin.Logger.LogInfo(
+                    $"[RolePoolBuilder] {pool.Roles.Count} roles | " +
+                    $"Imp:{pool.MaxImpostors} NK:{pool.MaxNeutralKillings} " +
+                    $"NB:{pool.MaxNeutralBenign} NE:{pool.MaxNeutralEvil} NO:{pool.MaxNeutralOutlier}");
             }
             catch (Exception ex)
             {
-                DraftModePlugin.Logger.LogWarning(
-                    $"[RolePoolBuilder] Failed building pool: {ex.Message}");
+                DraftModePlugin.Logger.LogWarning($"[RolePoolBuilder] Build failed: {ex.Message}");
             }
 
-            // Fallback for classic mode only
-            if (!pool.IsRoleListMode && pool.Roles.Count == 0)
+            if (pool.Roles.Count == 0)
             {
-                DraftModePlugin.Logger.LogWarning(
-                    "[RolePoolBuilder] No enabled roles detected — using fallback role list");
-                foreach (var roleName in GetFallbackRoles())
-                    AddRole(pool, roleName, null!, 1, 100, RoleCategory.GetFaction(roleName));
+                DraftModePlugin.Logger.LogWarning("[RolePoolBuilder] No roles found — using fallback");
+                foreach (var r in FallbackRoles())
+                    AddRole(pool, r, null!, 1, 100, RoleCategory.GetFaction(r));
             }
 
             return pool;
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // ROLE LIST MODE: build per-slot data from TOU's Slot1-15 options
+        // Load faction caps + per-seat chances from DraftRoleListOptions
         // ─────────────────────────────────────────────────────────────────────
-        private static void BuildFromRoleList(DraftRolePool pool, RoleOptions roleOpts)
+        private static void LoadFactionSettings(DraftRolePool pool)
         {
-            // 1. Collect all enabled roles (count > 0 && chance > 0) grouped by alignment
-            //    Also populate pool.Roles / Weights / Factions / RoleLookup for UI lookups.
-            var byAlignment = new Dictionary<RoleAlignment, List<string>>();
+            var imp     = OptionGroupSingleton<DraftImpOptions>.Instance;
+            var nk      = OptionGroupSingleton<DraftNeutKillOptions>.Instance;
+            var benign  = OptionGroupSingleton<DraftNeutBenignOptions>.Instance;
+            var evil    = OptionGroupSingleton<DraftNeutEvilOptions>.Instance;
+            var outlier = OptionGroupSingleton<DraftNeutOutlierOptions>.Instance;
+            var crew    = OptionGroupSingleton<DraftCrewOptions>.Instance;
 
-            var gameRoleOptions = GameOptionsManager.Instance?.CurrentGameOptions?.RoleOptions;
-            var registeredRoles = MiscUtils.AllRegisteredRoles.ToArray();
-
-            foreach (var role in registeredRoles)
+            if (imp == null || nk == null || benign == null || evil == null || outlier == null || crew == null)
             {
-                if (role == null) continue;
-                if (!CustomRoleUtils.CanSpawnOnCurrentMode(role)) continue;
-                if (role.Role is RoleTypes.CrewmateGhost or RoleTypes.ImpostorGhost or RoleTypes.GuardianAngel) continue;
-                if (role is ICustomRole customRole && (customRole.Configuration.HideSettings || !customRole.VisibleInSettings()))
-                    continue;
-
-                string canonical = GetCanonicalName(role);
-                if (IsBannedRole(canonical)) continue;
-
-                // In Role List mode, TOU uses roles that are enabled (count>0, chance>0)
-                int count  = gameRoleOptions?.GetNumPerGame(role.Role)  ?? 0;
-                int chance = gameRoleOptions?.GetChancePerGame(role.Role) ?? 0;
-                if (count <= 0 || chance <= 0) continue;
-
-                if (role is ITownOfUsRole touRole)
-                {
-                    var alignment = touRole.RoleAlignment;
-                    if (!byAlignment.ContainsKey(alignment))
-                        byAlignment[alignment] = new List<string>();
-                    if (!byAlignment[alignment].Contains(canonical))
-                        byAlignment[alignment].Add(canonical);
-                }
-
-                // Register in the flat pool too (for UI / lookup)
-                var faction = GetFactionFromRole(role);
-                AddRole(pool, canonical, role, count, chance, faction);
+                DraftModePlugin.Logger.LogWarning("[RolePoolBuilder] One or more option groups not ready — using defaults");
+                return;
             }
 
-            // 2. Build the slot list from Slot1–15 options
-            var slotOptions = new[]
-            {
-                roleOpts.Slot1,  roleOpts.Slot2,  roleOpts.Slot3,
-                roleOpts.Slot4,  roleOpts.Slot5,  roleOpts.Slot6,
-                roleOpts.Slot7,  roleOpts.Slot8,  roleOpts.Slot9,
-                roleOpts.Slot10, roleOpts.Slot11, roleOpts.Slot12,
-                roleOpts.Slot13, roleOpts.Slot14, roleOpts.Slot15
-            };
+            pool.MaxImpostors       = Mathf.RoundToInt(imp.MaxImpostors);
+            pool.MaxNeutralKillings = Mathf.RoundToInt(nk.MaxNeutralKillings);
+            pool.MaxNeutralBenign   = Mathf.RoundToInt(benign.MaxNeutralBenign);
+            pool.MaxNeutralEvil     = Mathf.RoundToInt(evil.MaxNeutralEvil);
+            pool.MaxNeutralOutlier  = Mathf.RoundToInt(outlier.MaxNeutralOutlier);
 
-            foreach (var slotOpt in slotOptions)
-            {
-                var bucket     = (RoleListOption)slotOpt.Value;
-                var validRoles = GetRolesForBucket(bucket, byAlignment, pool);
-                pool.Slots.Add(new DraftSlot(bucket, validRoles));
-            }
-        }
+            pool.ImpSeatChances = new float[pool.MaxImpostors];
+            for (int i = 0; i < pool.MaxImpostors; i++)
+                pool.ImpSeatChances[i] = imp.GetChance(i + 1);
 
-        /// <summary>
-        /// Returns the list of canonical role names that are valid for a given Role List bucket,
-        /// based on which roles are actually enabled in the role settings.
-        /// </summary>
-        private static List<string> GetRolesForBucket(
-            RoleListOption bucket,
-            Dictionary<RoleAlignment, List<string>> byAlignment,
-            DraftRolePool pool)
-        {
-            List<string> GetA(RoleAlignment a) =>
-                byAlignment.TryGetValue(a, out var l) ? l : new List<string>();
+            pool.NeutKillSeatChances = new float[pool.MaxNeutralKillings];
+            for (int i = 0; i < pool.MaxNeutralKillings; i++)
+                pool.NeutKillSeatChances[i] = nk.GetChance(i + 1);
 
-            switch (bucket)
-            {
-                // ── Crewmate ─────────────────────────────────────────────────
-                case RoleListOption.CrewInvest:
-                    return GetA(RoleAlignment.CrewmateInvestigative);
+            pool.NeutBenignSeatChances = new float[pool.MaxNeutralBenign];
+            for (int i = 0; i < pool.MaxNeutralBenign; i++)
+                pool.NeutBenignSeatChances[i] = benign.GetChance(i + 1);
 
-                case RoleListOption.CrewKilling:
-                    return GetA(RoleAlignment.CrewmateKilling);
+            pool.NeutEvilSeatChances = new float[pool.MaxNeutralEvil];
+            for (int i = 0; i < pool.MaxNeutralEvil; i++)
+                pool.NeutEvilSeatChances[i] = evil.GetChance(i + 1);
 
-                case RoleListOption.CrewProtective:
-                    return GetA(RoleAlignment.CrewmateProtective);
+            pool.NeutOutlierSeatChances = new float[pool.MaxNeutralOutlier];
+            for (int i = 0; i < pool.MaxNeutralOutlier; i++)
+                pool.NeutOutlierSeatChances[i] = outlier.GetChance(i + 1);
 
-                case RoleListOption.CrewPower:
-                    return GetA(RoleAlignment.CrewmatePower);
-
-                case RoleListOption.CrewSupport:
-                    return GetA(RoleAlignment.CrewmateSupport);
-
-                case RoleListOption.CrewCommon:
-                    return Concat(
-                        GetA(RoleAlignment.CrewmateInvestigative),
-                        GetA(RoleAlignment.CrewmateProtective),
-                        GetA(RoleAlignment.CrewmateSupport));
-
-                case RoleListOption.CrewSpecial:
-                    return Concat(
-                        GetA(RoleAlignment.CrewmateKilling),
-                        GetA(RoleAlignment.CrewmatePower));
-
-                case RoleListOption.CrewRandom:
-                    return Concat(
-                        GetA(RoleAlignment.CrewmateInvestigative),
-                        GetA(RoleAlignment.CrewmateKilling),
-                        GetA(RoleAlignment.CrewmateProtective),
-                        GetA(RoleAlignment.CrewmatePower),
-                        GetA(RoleAlignment.CrewmateSupport));
-
-                // ── Impostor ─────────────────────────────────────────────────
-                case RoleListOption.ImpConceal:
-                    return GetA(RoleAlignment.ImpostorConcealing);
-
-                case RoleListOption.ImpKilling:
-                    return GetA(RoleAlignment.ImpostorKilling);
-
-                case RoleListOption.ImpPower:
-                    return GetA(RoleAlignment.ImpostorPower);
-
-                case RoleListOption.ImpSupport:
-                    return GetA(RoleAlignment.ImpostorSupport);
-
-                case RoleListOption.ImpCommon:
-                    return Concat(
-                        GetA(RoleAlignment.ImpostorConcealing),
-                        GetA(RoleAlignment.ImpostorSupport));
-
-                case RoleListOption.ImpSpecial:
-                    return Concat(
-                        GetA(RoleAlignment.ImpostorKilling),
-                        GetA(RoleAlignment.ImpostorPower));
-
-                case RoleListOption.ImpRandom:
-                    return Concat(
-                        GetA(RoleAlignment.ImpostorConcealing),
-                        GetA(RoleAlignment.ImpostorKilling),
-                        GetA(RoleAlignment.ImpostorPower),
-                        GetA(RoleAlignment.ImpostorSupport));
-
-                // ── Neutral ───────────────────────────────────────────────────
-                case RoleListOption.NeutBenign:
-                    return GetA(RoleAlignment.NeutralBenign);
-
-                case RoleListOption.NeutEvil:
-                    return GetA(RoleAlignment.NeutralEvil);
-
-                case RoleListOption.NeutKilling:
-                    return GetA(RoleAlignment.NeutralKilling);
-
-                case RoleListOption.NeutOutlier:
-                    return GetA(RoleAlignment.NeutralOutlier);
-
-                case RoleListOption.NeutCommon:
-                    return Concat(
-                        GetA(RoleAlignment.NeutralBenign),
-                        GetA(RoleAlignment.NeutralEvil));
-
-                case RoleListOption.NeutSpecial:
-                    return Concat(
-                        GetA(RoleAlignment.NeutralKilling),
-                        GetA(RoleAlignment.NeutralOutlier));
-
-                case RoleListOption.NeutWildcard:
-                    return Concat(
-                        GetA(RoleAlignment.NeutralBenign),
-                        GetA(RoleAlignment.NeutralEvil),
-                        GetA(RoleAlignment.NeutralOutlier));
-
-                case RoleListOption.NeutRandom:
-                    return Concat(
-                        GetA(RoleAlignment.NeutralBenign),
-                        GetA(RoleAlignment.NeutralEvil),
-                        GetA(RoleAlignment.NeutralKilling),
-                        GetA(RoleAlignment.NeutralOutlier));
-
-                // ── Cross-faction ─────────────────────────────────────────────
-                case RoleListOption.NonImp:
-                    // Any non-impostor: all crew + all neutral
-                    return pool.Roles
-                        .Where(r => pool.Factions.TryGetValue(r, out var f) && f != RoleFaction.Impostor)
-                        .ToList();
-
-                case RoleListOption.Any:
-                    return pool.Roles.ToList();
-
-                default:
-                    // Fallback — return everything
-                    return pool.Roles.ToList();
-            }
-        }
-
-        private static List<string> Concat(params List<string>[] lists)
-        {
-            var result = new List<string>();
-            foreach (var l in lists)
-                foreach (var r in l)
-                    if (!result.Contains(r))
-                        result.Add(r);
-            return result;
+            pool.CrewInvestigativeChance = crew.CrewInvestigativeChance.Value;
+            pool.CrewKillingChance       = crew.CrewKillingChance.Value;
+            pool.CrewPowerChance         = crew.CrewPowerChance.Value;
+            pool.CrewProtectiveChance    = crew.CrewProtectiveChance.Value;
+            pool.CrewSupportChance       = crew.CrewSupportChance.Value;
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // CLASSIC MODE: read from vanilla RoleOptions counts / chances
+        // Collect all enabled roles from vanilla + TOU role settings
         // ─────────────────────────────────────────────────────────────────────
         private static void BuildFromRoleOptions(DraftRolePool pool)
         {
-            var roleOptions = GameOptionsManager.Instance?.CurrentGameOptions?.RoleOptions;
-            if (roleOptions == null) return;
+            var roleOpts = GameOptionsManager.Instance?.CurrentGameOptions?.RoleOptions;
+            if (roleOpts == null) return;
 
-            var roles = MiscUtils.AllRegisteredRoles.ToArray();
-
-            foreach (var role in roles)
+            foreach (var role in MiscUtils.AllRegisteredRoles.ToArray())
             {
                 if (role == null) continue;
                 if (!CustomRoleUtils.CanSpawnOnCurrentMode(role)) continue;
                 if (role.Role is RoleTypes.CrewmateGhost or RoleTypes.ImpostorGhost or RoleTypes.GuardianAngel) continue;
+                if (role is ICustomRole cr && (cr.Configuration.HideSettings || !cr.VisibleInSettings())) continue;
 
-                if (role is ICustomRole customRole)
-                {
-                    if (customRole.Configuration.HideSettings || !customRole.VisibleInSettings())
-                        continue;
-                }
+                var canonical = GetCanonicalName(role);
+                if (IsBannedRole(canonical)) continue;
 
-                string canonicalName = GetCanonicalName(role);
-                if (IsBannedRole(canonicalName)) continue;
-
-                int count  = roleOptions.GetNumPerGame(role.Role);
-                int chance = roleOptions.GetChancePerGame(role.Role);
+                int count  = roleOpts.GetNumPerGame(role.Role);
+                int chance = roleOpts.GetChancePerGame(role.Role);
                 if (count <= 0 || chance <= 0) continue;
 
-                var faction = GetFactionFromRole(role);
-                AddRole(pool, canonicalName, role, count, chance, faction);
+                AddRole(pool, canonical, role, count, chance, GetFactionFromRole(role));
             }
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // Helpers shared by both modes
+        // Helpers
         // ─────────────────────────────────────────────────────────────────────
 
         public static string GetCanonicalName(RoleBehaviour role)
         {
-            if (role is ITownOfUsRole touRole)
-                return touRole.LocaleKey;
-
-            var typeName = role.GetType().Name;
-            if (typeName.EndsWith("Role", StringComparison.OrdinalIgnoreCase))
-                typeName = typeName[..^4];
-            return typeName;
+            if (role is ITownOfUsRole touRole) return touRole.LocaleKey;
+            var t = role.GetType().Name;
+            if (t.EndsWith("Role", StringComparison.OrdinalIgnoreCase)) t = t[..^4];
+            return t;
         }
 
         private static RoleFaction GetFactionFromRole(RoleBehaviour role)
@@ -351,65 +190,63 @@ namespace DraftModeTOUM.Managers
             {
                 return touRole.RoleAlignment switch
                 {
-                    RoleAlignment.NeutralKilling => RoleFaction.NeutralKilling,
-                    RoleAlignment.NeutralBenign or
-                    RoleAlignment.NeutralEvil or
-                    RoleAlignment.NeutralOutlier => RoleFaction.Neutral,
-                    RoleAlignment.ImpostorConcealing or
-                    RoleAlignment.ImpostorKilling or
-                    RoleAlignment.ImpostorPower or
-                    RoleAlignment.ImpostorSupport => RoleFaction.Impostor,
-                    _ => RoleFaction.Crewmate
+                    RoleAlignment.NeutralKilling         => RoleFaction.NeutralKilling,
+                    RoleAlignment.NeutralBenign          => RoleFaction.NeutralBenign,
+                    RoleAlignment.NeutralEvil            => RoleFaction.NeutralEvil,
+                    RoleAlignment.NeutralOutlier         => RoleFaction.NeutralOutlier,
+                    RoleAlignment.ImpostorConcealing or RoleAlignment.ImpostorKilling
+                        or RoleAlignment.ImpostorPower or RoleAlignment.ImpostorSupport => RoleFaction.Impostor,
+                    RoleAlignment.CrewmateInvestigative  => RoleFaction.CrewInvestigative,
+                    RoleAlignment.CrewmateKilling        => RoleFaction.CrewKilling,
+                    RoleAlignment.CrewmatePower          => RoleFaction.CrewPower,
+                    RoleAlignment.CrewmateProtective     => RoleFaction.CrewProtective,
+                    RoleAlignment.CrewmateSupport        => RoleFaction.CrewSupport,
+                    _                                    => RoleFaction.Crewmate,
                 };
             }
-
+            // Fallback for non-TOU roles: use canonical name lookup
             if (role.IsImpostor()) return RoleFaction.Impostor;
-            if (role.IsNeutral())  return RoleFaction.Neutral;
-            return RoleFaction.Crewmate;
+            return RoleCategory.GetFaction(GetCanonicalName(role));
         }
 
-        private static readonly HashSet<string> _bannedRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        private static readonly HashSet<string> _bannedRoles = new(StringComparer.OrdinalIgnoreCase)
         {
             "Haunter", "Spectre", "Teleporter", "Pestilence", "Traitor", "Mayor"
         };
 
         public static bool IsBannedRole(string roleName) => _bannedRoles.Contains(roleName);
 
-        private static void AddRole(DraftRolePool pool, string roleName, RoleBehaviour role, int maxCount, int weight, RoleFaction faction)
+        private static void AddRole(DraftRolePool pool, string name, RoleBehaviour role,
+            int maxCount, int weight, RoleFaction faction)
         {
-            if (string.IsNullOrWhiteSpace(roleName)) return;
-            if (!pool.MaxCounts.ContainsKey(roleName))
+            if (string.IsNullOrWhiteSpace(name)) return;
+            if (!pool.MaxCounts.ContainsKey(name))
             {
-                pool.Roles.Add(roleName);
-                pool.MaxCounts[roleName]  = Math.Max(1, maxCount);
-                pool.Weights[roleName]    = Math.Max(1, weight);
-                pool.Factions[roleName]   = faction;
-                pool.RoleLookup[roleName] = role;
+                pool.Roles.Add(name);
+                pool.MaxCounts[name]  = Math.Max(1, maxCount);
+                pool.Weights[name]    = Math.Max(1, weight);
+                pool.Factions[name]   = faction;
+                pool.RoleLookup[name] = role;
             }
             else
             {
-                pool.MaxCounts[roleName] = Math.Max(pool.MaxCounts[roleName], maxCount);
-                pool.Weights[roleName]   = Math.Max(pool.Weights[roleName], weight);
+                pool.MaxCounts[name] = Math.Max(pool.MaxCounts[name], maxCount);
+                pool.Weights[name]   = Math.Max(pool.Weights[name], weight);
             }
         }
 
-        private static IEnumerable<string> GetFallbackRoles()
+        private static IEnumerable<string> FallbackRoles() => new[]
         {
-            return new[]
-            {
-                "Aurial","Forensic","Lookout","Mystic","Seer",
-                "Snitch","Sonar","Trapper","Deputy","Sheriff",
-                "Veteran","Vigilante","Jailor","Monarch","Politician",
-                "Prosecutor","Swapper","TimeLord","Altruist","Cleric","Medic",
-                "Mirrorcaster","Oracle","Warden","EngineerTou","Imitator","Medium",
-                "Plumber","Sentry","Transporter","Eclipsal","Escapist","Grenadier",
-                "Morphling","Swooper","Venerer","Ambusher","Bomber","Parasite",
-                "Scavenger","Warlock","Ambassador","Puppeteer","Spellslinger",
-                "Blackmailer","Hypnotist","Janitor","Miner","Undertaker",
-                "Fairy","Mercenary","Survivor","Doomsayer","Executioner","Jester",
-                "Arsonist","Glitch","Juggernaut","Plaguebearer",
-                "SoulCollector","Vampire","Werewolf","Chef","Inquisitor"
-            };
-        }
+            "Aurial","Forensic","Lookout","Mystic","Seer","Snitch","Sonar","Trapper",
+            "Deputy","Sheriff","Veteran","Vigilante","Jailor","Monarch","Politician",
+            "Prosecutor","Swapper","TimeLord","Altruist","Cleric","Medic","Mirrorcaster",
+            "Oracle","Warden","EngineerTou","Imitator","Medium","Plumber","Sentry",
+            "Transporter","Eclipsal","Escapist","Grenadier","Morphling","Swooper","Venerer",
+            "Ambusher","Bomber","Parasite","Scavenger","Warlock","Ambassador","Puppeteer",
+            "Spellslinger","Blackmailer","Hypnotist","Janitor","Miner","Undertaker",
+            "Fairy","Mercenary","Survivor","Doomsayer","Executioner","Jester",
+            "Arsonist","Glitch","Juggernaut","Plaguebearer","SoulCollector",
+            "Vampire","Werewolf","Chef","Inquisitor"
+        };
     }
 }
