@@ -405,54 +405,70 @@ namespace DraftModeTOUM.Managers
             DraftNetworkHelper.SendTurnAnnouncement(state.SlotNumber, state.PlayerId, state.OfferedRoles, CurrentTurn);
         }
 
-        // Chance (0–100) that a second bucket card appears alongside the first.
-        // 15% feels rare enough to be exciting.
-        private const int SecondFactionCardChance = 15;
+        // Chance (0–100) that a second bucket card appears in the hand.
+        private const int SecondBucketCardChance = 15;
 
         private static List<string> BuildOffersForRoleListMode()
         {
-            int target    = OfferedRolesCount;
-            var slot      = GetSlotForCurrentTurn();
-            var available = GetAvailableRolesForSlot(slot);
+            int target = OfferedRolesCount;
+            var slot   = GetSlotForCurrentTurn();
 
-            // No roles in this bucket at all — single Crewmate safety net.
-            if (available.Count == 0)
+            // bucketRoles = roles valid for THIS slot's bucket.
+            // otherRoles  = roles valid for the OTHER remaining slots in this game.
+            //               Built by union-ing the valid roles of all other turns' slots
+            //               so we never show a faction that has no slot in this lobby.
+            var bucketRoles = GetAvailableRolesForSlot(slot);
+
+            var otherRoles = new List<string>();
+            for (int i = 0; i < _turnSlots.Count; i++)
             {
-                DraftModePlugin.Logger.LogInfo(
-                    $"[DraftManager] Turn {CurrentTurn} bucket={slot.Bucket} — empty, offering Crewmate");
-                return new List<string> { "Crewmate" };
+                if (i == CurrentTurn - 1) continue; // skip current slot
+                foreach (var r in _turnSlots[i].ValidRoles)
+                {
+                    if (bucketRoles.Contains(r, StringComparer.OrdinalIgnoreCase)) continue;
+                    if (GetDraftedCount(r) >= GetMaxCount(r)) continue;
+                    if (!otherRoles.Contains(r, StringComparer.OrdinalIgnoreCase))
+                        otherRoles.Add(r);
+                }
             }
 
             var offered = new List<string>();
 
-            // 1. Always give exactly 1 card from the bucket.
-            offered.AddRange(PickWeightedUnique(available, 1));
-
-            // 2. Rarely give a second bucket card (15% chance).
-            if (target >= 2 && available.Count > 1
-                && UnityEngine.Random.Range(0, 100) < SecondFactionCardChance)
+            if (bucketRoles.Count > 0)
             {
-                var secondPool = available
-                    .Where(r => !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase)))
-                    .ToList();
-                if (secondPool.Count > 0)
-                    offered.AddRange(PickWeightedUnique(secondPool, 1));
+                // 1. One guaranteed bucket card.
+                offered.AddRange(PickWeightedUnique(bucketRoles, 1));
+
+                // 2. Rare second bucket card.
+                if (target >= 2 && bucketRoles.Count > 1
+                    && UnityEngine.Random.Range(0, 100) < SecondBucketCardChance)
+                {
+                    var pool2 = bucketRoles
+                        .Where(r => !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase)))
+                        .ToList();
+                    if (pool2.Count > 0)
+                        offered.AddRange(PickWeightedUnique(pool2, 1));
+                }
             }
 
-            // 3. Fill remaining slots with MORE bucket roles — strictly no cross-bucket filler.
-            //    If the bucket doesn't have enough roles to fill all slots, just show fewer cards.
+            // 3. Fill the rest of the hand with OTHER enabled roles (crew, neut, etc.).
+            //    This is the majority of the hand — the bucket card is just 1 option among many.
             int remaining = target - offered.Count;
-            if (remaining > 0 && available.Count > offered.Count)
+            if (remaining > 0 && otherRoles.Count > 0)
             {
-                var extras = PickWeightedUnique(
-                    available.Where(r => !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase))).ToList(),
+                var filler = PickWeightedUnique(
+                    otherRoles.Where(r => !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase))).ToList(),
                     remaining);
-                offered.AddRange(extras);
+                offered.AddRange(filler);
             }
+
+            // Only use bare Crewmate if we ended up with a completely empty hand.
+            if (offered.Count == 0)
+                offered.Add("Crewmate");
 
             DraftModePlugin.Logger.LogInfo(
                 $"[DraftManager] Turn {CurrentTurn} bucket={slot.Bucket} " +
-                $"bucketAvail={available.Count} offered={offered.Count}");
+                $"bucket={bucketRoles.Count} other={otherRoles.Count} offered={offered.Count}");
 
             return offered;
         }
