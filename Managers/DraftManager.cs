@@ -10,6 +10,7 @@ using System.Linq;
 using System.Text;
 using Reactor.Utilities;
 using UnityEngine;
+using TownOfUs.Options;
 using TownOfUs.Utilities;
 
 namespace DraftModeTOUM.Managers
@@ -39,7 +40,7 @@ namespace DraftModeTOUM.Managers
         public static int OfferedRolesCount { get; set; } = 3;
         public static bool ShowRandomOption { get; set; } = true;
 
-        // ── Faction caps — change these to adjust limits ─────────────────────
+        // ── Faction caps (classic mode only) ─────────────────────────────────
         public static int MaxImpostors { get; set; } = 2;
         public static int MaxNeutralKillings { get; set; } = 2;
         public static int MaxNeutralPassives { get; set; } = 3;
@@ -48,10 +49,16 @@ namespace DraftModeTOUM.Managers
         private static int _neutralKillingsDrafted = 0;
         private static int _neutralPassivesDrafted = 0;
 
-        // ── Pre-computed hard caps per role (min of role-setting max and faction budget) ─
-        // This is computed once at draft start and decremented as roles are PICKED.
-        // It is the single source of truth for how many of each role can ever be drafted.
+        // ── Classic-mode per-role budget ─────────────────────────────────────
         private static Dictionary<string, int> _roleRemainingSlots = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        // ── Role List mode: ordered slots (one per player turn) ──────────────
+        private static bool _isRoleListMode = false;
+        /// <summary>
+        /// Per-turn slot data for Role List mode.
+        /// Index corresponds to (TurnOrder index), i.e., slot at index 0 is for the 1st picker.
+        /// </summary>
+        private static List<DraftSlot> _turnSlots = new List<DraftSlot>();
 
         internal static bool SkipCountdown { get; private set; } = false;
 
@@ -63,14 +70,8 @@ namespace DraftModeTOUM.Managers
         private static Dictionary<string, int> _roleWeights = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private static Dictionary<string, RoleFaction> _roleFactions = new Dictionary<string, RoleFaction>(StringComparer.OrdinalIgnoreCase);
         private static Dictionary<string, int> _draftedRoleCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        // Canonical key → RoleBehaviour, populated at draft start from the pool.
-        // Used by the UI to resolve icons/colours without touching NiceName/GetRoleName.
         private static Dictionary<string, RoleBehaviour> _roleLookup = new Dictionary<string, RoleBehaviour>(StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>
-        /// Looks up a RoleBehaviour by canonical locale key (e.g. "SoulCollector").
-        /// Returns null if the role was not in the pool built at draft start.
-        /// </summary>
         public static RoleBehaviour? FindRoleInPool(string canonicalKey) =>
             _roleLookup.TryGetValue(canonicalKey, out var role) ? role : null;
 
@@ -129,17 +130,33 @@ namespace DraftModeTOUM.Managers
             var players = PlayerControl.AllPlayerControls.ToArray()
                 .Where(p => p != null && !p.Data.Disconnected).ToList();
             var pool = RolePoolBuilder.BuildPool();
-            _lobbyRolePool = pool.Roles;
-            _roleMaxCounts = pool.MaxCounts;
-            _roleWeights = pool.Weights;
-            _roleFactions = pool.Factions;
-            _roleLookup = pool.RoleLookup;
-            if (_lobbyRolePool.Count == 0) return;
+            _lobbyRolePool  = pool.Roles;
+            _roleMaxCounts  = pool.MaxCounts;
+            _roleWeights    = pool.Weights;
+            _roleFactions   = pool.Factions;
+            _roleLookup     = pool.RoleLookup;
+            _isRoleListMode = pool.IsRoleListMode;
+            _turnSlots      = pool.Slots;
+
+            if (_isRoleListMode)
+            {
+                // In Role List mode we need at least 1 slot; role pool can be empty
+                if (_turnSlots.Count == 0)
+                {
+                    DraftModePlugin.Logger.LogWarning(
+                        "[DraftManager] Role List mode active but no slots found — aborting draft");
+                    return;
+                }
+            }
+            else
+            {
+                if (_lobbyRolePool.Count == 0) return;
+            }
 
             int totalSlots = players.Count;
             var shuffledSlots = Enumerable.Range(1, totalSlots).OrderBy(_ => UnityEngine.Random.value).ToList();
-            List<byte> syncPids = new List<byte>();
-            List<int> syncSlots = new List<int>();
+            List<byte> syncPids  = new List<byte>();
+            List<int>  syncSlots = new List<int>();
 
             for (int i = 0; i < totalSlots; i++)
             {
@@ -156,10 +173,9 @@ namespace DraftModeTOUM.Managers
             TurnTimeLeft = TurnDuration;
             IsDraftActive = true;
 
-            // Pre-compute how many of each role can actually be drafted,
-            // respecting BOTH the per-role cap from role settings AND the
-            // overall faction caps.  This is the definitive budget.
-            BuildRemainingSlots();
+            // Classic-mode budget (not used in Role List mode)
+            if (!_isRoleListMode)
+                BuildRemainingSlots();
 
             DraftNetworkHelper.BroadcastDraftStart(totalSlots, syncPids, syncSlots);
             NotifyPlayersOfSlots();
@@ -177,8 +193,8 @@ namespace DraftModeTOUM.Managers
         public static void Reset(bool cancelledBeforeCompletion = true)
         {
             IsDraftActive = false;
-            CurrentTurn = 0;
-            TurnTimeLeft = 0f;
+            CurrentTurn   = 0;
+            TurnTimeLeft  = 0f;
             DraftUiManager.CloseAll();
 
             if (cancelledBeforeCompletion)
@@ -196,16 +212,16 @@ namespace DraftModeTOUM.Managers
             _roleFactions.Clear();
             _roleRemainingSlots.Clear();
             _roleLookup.Clear();
+            _turnSlots.Clear();
+            _isRoleListMode = false;
             TurnOrder.Clear();
 
-            _impostorsDrafted = 0;
+            _impostorsDrafted       = 0;
             _neutralKillingsDrafted = 0;
             _neutralPassivesDrafted = 0;
 
             if (cancelledBeforeCompletion)
-            {
                 UpCommandRequests.Clear();
-            }
         }
 
         public static void Tick(float deltaTime)
@@ -215,13 +231,10 @@ namespace DraftModeTOUM.Managers
             if (TurnTimeLeft <= 0f) AutoPickRandom();
         }
 
-        /// <summary>
-        /// Builds _roleRemainingSlots at draft start.
-        /// Each role's slot count is capped at min(roleSettingMax, remainingFactionBudget).
-        /// Faction budgets are allocated greedily in the order roles appear in the pool
-        /// (which is random / weighted), so the total impostors/NK/neutral that can ever
-        /// be drafted can never exceed MaxImpostors / MaxNeutralKillings / MaxNeutralPassives.
-        /// </summary>
+        // ─────────────────────────────────────────────────────────────────────
+        // Classic-mode budget helpers
+        // ─────────────────────────────────────────────────────────────────────
+
         private static void BuildRemainingSlots()
         {
             _roleRemainingSlots.Clear();
@@ -250,15 +263,13 @@ namespace DraftModeTOUM.Managers
                         allowed = Math.Min(settingMax, npBudget);
                         npBudget -= allowed;
                         break;
-                    default: // Crewmate — no faction cap
+                    default:
                         allowed = settingMax;
                         break;
                 }
 
                 if (allowed > 0)
                     _roleRemainingSlots[roleName] = allowed;
-                // Roles with 0 remaining slots are simply absent from the dict
-                // and will never pass the GetAvailableRoles() filter.
             }
 
             DraftModePlugin.Logger.LogInfo(
@@ -270,11 +281,43 @@ namespace DraftModeTOUM.Managers
 
         private static List<string> GetAvailableRoles()
         {
-            // A role is available only if it still has remaining slots in the pre-computed budget.
             return _lobbyRolePool
                 .Where(r => _roleRemainingSlots.TryGetValue(r, out int rem) && rem > 0)
                 .ToList();
         }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Role List mode helpers
+        // ─────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Returns the DraftSlot for the current turn (0-indexed turn index).
+        /// Falls back to a "Any" slot with all pool roles if out of range.
+        /// </summary>
+        private static DraftSlot GetSlotForCurrentTurn()
+        {
+            int turnIndex = CurrentTurn - 1; // TurnOrder is 1-based
+            if (turnIndex >= 0 && turnIndex < _turnSlots.Count)
+                return _turnSlots[turnIndex];
+
+            // Beyond 15 players: offer any role
+            return new DraftSlot(RoleListOption.Any, _lobbyRolePool.ToList());
+        }
+
+        /// <summary>
+        /// Returns enabled roles for a slot that haven't been exhausted yet.
+        /// A role is exhausted when it's been picked as many times as its MaxCount.
+        /// </summary>
+        private static List<string> GetAvailableRolesForSlot(DraftSlot slot)
+        {
+            return slot.ValidRoles
+                .Where(r => _lobbyRolePool.Contains(r) && GetDraftedCount(r) < GetMaxCount(r))
+                .ToList();
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Offering roles to the current picker
+        // ─────────────────────────────────────────────────────────────────────
 
         private static void OfferRolesToCurrentPicker()
         {
@@ -282,57 +325,89 @@ namespace DraftModeTOUM.Managers
             if (state == null) return;
             state.IsPickingNow = true;
 
-            var available = GetAvailableRoles();
-            int target = OfferedRolesCount;
+            List<string> offered;
 
-            if (available.Count == 0)
-            {
-                // No roles left in the budget at all — everyone remaining gets Crewmate.
-                state.OfferedRoles = Enumerable.Repeat("Crewmate", target).ToList();
-            }
+            if (_isRoleListMode)
+                offered = BuildOffersForRoleListMode();
             else
-            {
-                var offered = new List<string>();
+                offered = BuildOffersForClassicMode();
 
-                // Only try to seat one impostor card if the impostor budget still has slots.
-                if (target >= 3)
-                {
-                    var impPool = available.Where(r => GetFaction(r) == RoleFaction.Impostor).ToList();
-                    if (impPool.Count > 0)
-                        offered.AddRange(PickWeightedUnique(impPool, 1));
-
-                    // Only try to seat one neutral card if the neutral budget still has slots.
-                    var nkPool = available.Where(r => GetFaction(r) == RoleFaction.NeutralKilling
-                        && !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase))).ToList();
-                    var npPool = available.Where(r => GetFaction(r) == RoleFaction.Neutral
-                        && !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase))).ToList();
-                    var neutralPool = nkPool.Count > 0 ? nkPool : npPool;
-                    if (neutralPool.Count > 0)
-                        offered.AddRange(PickWeightedUnique(neutralPool, 1));
-                }
-
-                // Fill remaining slots with crew, then anything else still available.
-                var crewPool = available.Where(r => GetFaction(r) == RoleFaction.Crewmate
-                    && !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase))).ToList();
-                offered.AddRange(PickWeightedUnique(crewPool, target - offered.Count));
-
-                if (offered.Count < target)
-                {
-                    var extras = PickWeightedUnique(
-                        available.Where(r => !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase))).ToList(),
-                        target - offered.Count);
-                    offered.AddRange(extras);
-                }
-
-                // If still short (very small pool), pad with Crewmate.
-                while (offered.Count < target)
-                    offered.Add("Crewmate");
-
-                state.OfferedRoles = offered.OrderBy(_ => UnityEngine.Random.value).ToList();
-            }
+            state.OfferedRoles = offered.OrderBy(_ => UnityEngine.Random.value).ToList();
 
             DraftNetworkHelper.SendTurnAnnouncement(state.SlotNumber, state.PlayerId, state.OfferedRoles, CurrentTurn);
         }
+
+        private static List<string> BuildOffersForRoleListMode()
+        {
+            int target      = OfferedRolesCount;
+            var slot        = GetSlotForCurrentTurn();
+            var available   = GetAvailableRolesForSlot(slot);
+
+            if (available.Count == 0)
+            {
+                // No valid roles left in this bucket — pad with Crewmate
+                return Enumerable.Repeat("Crewmate", target).ToList();
+            }
+
+            // Pick up to 'target' unique roles from the valid set for this slot
+            var offered = PickWeightedUnique(available, target);
+
+            // Pad with Crewmate if we couldn't fill all slots
+            while (offered.Count < target)
+                offered.Add("Crewmate");
+
+            DraftModePlugin.Logger.LogInfo(
+                $"[DraftManager] Turn {CurrentTurn} bucket={slot.Bucket} valid={available.Count} offered={offered.Count}");
+
+            return offered;
+        }
+
+        private static List<string> BuildOffersForClassicMode()
+        {
+            int target    = OfferedRolesCount;
+            var available = GetAvailableRoles();
+
+            if (available.Count == 0)
+                return Enumerable.Repeat("Crewmate", target).ToList();
+
+            var offered = new List<string>();
+
+            if (target >= 3)
+            {
+                var impPool = available.Where(r => GetFaction(r) == RoleFaction.Impostor).ToList();
+                if (impPool.Count > 0)
+                    offered.AddRange(PickWeightedUnique(impPool, 1));
+
+                var nkPool = available.Where(r => GetFaction(r) == RoleFaction.NeutralKilling
+                    && !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase))).ToList();
+                var npPool = available.Where(r => GetFaction(r) == RoleFaction.Neutral
+                    && !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase))).ToList();
+                var neutralPool = nkPool.Count > 0 ? nkPool : npPool;
+                if (neutralPool.Count > 0)
+                    offered.AddRange(PickWeightedUnique(neutralPool, 1));
+            }
+
+            var crewPool = available.Where(r => GetFaction(r) == RoleFaction.Crewmate
+                && !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase))).ToList();
+            offered.AddRange(PickWeightedUnique(crewPool, target - offered.Count));
+
+            if (offered.Count < target)
+            {
+                var extras = PickWeightedUnique(
+                    available.Where(r => !offered.Any(o => o.Equals(r, StringComparison.OrdinalIgnoreCase))).ToList(),
+                    target - offered.Count);
+                offered.AddRange(extras);
+            }
+
+            while (offered.Count < target)
+                offered.Add("Crewmate");
+
+            return offered;
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Pick submission
+        // ─────────────────────────────────────────────────────────────────────
 
         public static bool SubmitPick(byte playerId, int choiceIndex)
         {
@@ -364,9 +439,17 @@ namespace DraftModeTOUM.Managers
 
         private static string PickFullRandom()
         {
-            var available = GetAvailableRoles();
-            if (available.Count == 0) return "Crewmate";
-            return UseRoleChances ? PickWeighted(available) : available[UnityEngine.Random.Range(0, available.Count)];
+            if (_isRoleListMode)
+            {
+                var slot      = GetSlotForCurrentTurn();
+                var available = GetAvailableRolesForSlot(slot);
+                if (available.Count == 0) return "Crewmate";
+                return UseRoleChances ? PickWeighted(available) : available[UnityEngine.Random.Range(0, available.Count)];
+            }
+
+            var classicAvail = GetAvailableRoles();
+            if (classicAvail.Count == 0) return "Crewmate";
+            return UseRoleChances ? PickWeighted(classicAvail) : classicAvail[UnityEngine.Random.Range(0, classicAvail.Count)];
         }
 
         private static void FinalisePickForCurrentSlot(string roleName)
@@ -374,22 +457,23 @@ namespace DraftModeTOUM.Managers
             var state = GetCurrentPickerState();
             if (state == null) return;
 
-            state.ChosenRole = roleName;
-            state.HasPicked = true;
-            state.IsPickingNow = false;
+            state.ChosenRole    = roleName;
+            state.HasPicked     = true;
+            state.IsPickingNow  = false;
             _draftedRoleCounts[roleName] = GetDraftedCount(roleName) + 1;
 
-            // Decrement the pre-computed remaining slot for this role.
-            // This is the single authoritative counter — faction draft counters
-            // are kept in sync for logging but GetAvailableRoles() now uses
-            // _roleRemainingSlots exclusively, so no double-counting can occur.
-            if (_roleRemainingSlots.TryGetValue(roleName, out int rem))
-                _roleRemainingSlots[roleName] = Math.Max(0, rem - 1);
+            if (!_isRoleListMode)
+            {
+                // Classic mode: decrement pre-computed slot budget
+                if (_roleRemainingSlots.TryGetValue(roleName, out int rem))
+                    _roleRemainingSlots[roleName] = Math.Max(0, rem - 1);
+            }
+            // Role List mode: exhaustion is tracked via _draftedRoleCounts vs MaxCounts
 
             var faction = GetFaction(roleName);
-            if (faction == RoleFaction.Impostor) _impostorsDrafted++;
+            if (faction == RoleFaction.Impostor)       _impostorsDrafted++;
             else if (faction == RoleFaction.NeutralKilling) _neutralKillingsDrafted++;
-            else if (faction == RoleFaction.Neutral) _neutralPassivesDrafted++;
+            else if (faction == RoleFaction.Neutral)   _neutralPassivesDrafted++;
 
             CurrentTurn++;
             DraftUiManager.RefreshTurnList();
@@ -400,7 +484,6 @@ namespace DraftModeTOUM.Managers
                 ApplyAllRoles();
                 DraftUiManager.CloseAll();
 
-                // Keep the black background up during recap
                 DraftStatusOverlay.SetState(OverlayState.BackgroundOnly);
 
                 var recapEntries = BuildRecapEntries();
@@ -458,30 +541,33 @@ namespace DraftModeTOUM.Managers
         private static void ApplyLocalSettings()
         {
             var opts = MiraAPI.GameOptions.OptionGroupSingleton<DraftModeOptions>.Instance;
-            TurnDuration = Mathf.Clamp(opts.TurnDurationSeconds, 5f, 60f);
-            ShowRecap = opts.ShowRecap;
+            TurnDuration       = Mathf.Clamp(opts.TurnDurationSeconds, 5f, 60f);
+            ShowRecap          = opts.ShowRecap;
             AutoStartAfterDraft = opts.AutoStartAfterDraft;
             LockLobbyOnDraftStart = opts.LockLobbyOnDraftStart;
-            UseRoleChances = opts.UseRoleChances;
-            OfferedRolesCount = Mathf.Clamp(Mathf.RoundToInt(opts.OfferedRolesCount), 1, 9);
-            ShowRandomOption = opts.ShowRandomOption;
-            MaxImpostors = Mathf.Clamp(Mathf.RoundToInt(opts.MaxImpostors), 0, 10);
+            UseRoleChances     = opts.UseRoleChances;
+            OfferedRolesCount  = Mathf.Clamp(Mathf.RoundToInt(opts.OfferedRolesCount), 1, 9);
+            ShowRandomOption   = opts.ShowRandomOption;
+            MaxImpostors       = Mathf.Clamp(Mathf.RoundToInt(opts.MaxImpostors), 0, 10);
             MaxNeutralKillings = Mathf.Clamp(Mathf.RoundToInt(opts.MaxNeutralKillings), 0, 10);
             MaxNeutralPassives = Mathf.Clamp(Mathf.RoundToInt(opts.MaxNeutralPassives), 0, 10);
         }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Small helpers
+        // ─────────────────────────────────────────────────────────────────────
 
         private static int GetDraftedCount(string roleName) => _draftedRoleCounts.TryGetValue(roleName, out var count) ? count : 0;
         private static int GetMaxCount(string roleName) => _roleMaxCounts.TryGetValue(roleName, out var count) ? count : 1;
         private static RoleFaction GetFaction(string roleName) => _roleFactions.TryGetValue(roleName, out var faction) ? faction : RoleCategory.GetFaction(roleName);
         private static int GetWeight(string roleName) => _roleWeights.TryGetValue(roleName, out var weight) ? Math.Max(1, weight) : 1;
-        private static int GetRemainingSlots(string roleName) => _roleRemainingSlots.TryGetValue(roleName, out var rem) ? rem : 0;
 
         private static string PickWeighted(List<string> candidates)
         {
             int total = candidates.Sum(GetWeight);
             if (total <= 0) return candidates[UnityEngine.Random.Range(0, candidates.Count)];
             int roll = UnityEngine.Random.Range(1, total + 1);
-            int acc = 0;
+            int acc  = 0;
             foreach (var r in candidates)
             {
                 acc += GetWeight(r);
@@ -493,7 +579,7 @@ namespace DraftModeTOUM.Managers
         private static List<string> PickWeightedUnique(List<string> candidates, int count)
         {
             var results = new List<string>();
-            var temp = new List<string>(candidates);
+            var temp    = new List<string>(candidates);
             while (results.Count < count && temp.Count > 0)
             {
                 var pick = UseRoleChances ? PickWeighted(temp) : temp[UnityEngine.Random.Range(0, temp.Count)];
@@ -510,23 +596,19 @@ namespace DraftModeTOUM.Managers
 
         private static IEnumerator CoEndDraftSequence()
         {
-            // 1. Wait for Recap Phase (5 seconds)
             yield return new WaitForSeconds(ShowRecap ? 5.0f : 0.5f);
 
-            // 2. Hide Recap Text (but keep black screen for now)
             try { DraftRecapOverlay.Hide(); } catch { }
 
-            bool isHost = AmongUsClient.Instance.AmHost;
-            bool shouldAutoStart = AutoStartAfterDraft && isHost;
+            bool isHost           = AmongUsClient.Instance.AmHost;
+            bool shouldAutoStart  = AutoStartAfterDraft && isHost;
 
-            // If NOT auto-starting, remove the black screen immediately
             if (!AutoStartAfterDraft)
             {
                 try { DraftStatusOverlay.SetState(OverlayState.Hidden); } catch { }
                 yield break;
             }
 
-            // 3. START GAME (Host only)
             if (shouldAutoStart)
             {
                 if (GameStartManager.Instance != null && AmongUsClient.Instance.GameState == InnerNet.InnerNetClient.GameStates.Joined)
@@ -541,12 +623,8 @@ namespace DraftModeTOUM.Managers
                 }
             }
 
-            // 4. WAIT a small buffer (0.6s) to cover the lobby flash.
-            // Since game start was triggered BEFORE this wait, the game is already loading.
             yield return new WaitForSeconds(0.6f);
 
-            // 5. Force hide the screen. 
-            // This ensures you are never stuck, even if the transition patches fail.
             try { DraftStatusOverlay.SetState(OverlayState.Hidden); } catch { }
         }
     }
