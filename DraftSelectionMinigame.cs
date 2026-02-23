@@ -340,17 +340,9 @@ namespace DraftModeTOUM
         private static string GetFactionLabel(string roleName) =>
             RoleCategory.GetFaction(roleName) switch
             {
-                RoleFaction.Impostor           => "Impostor",
-                RoleFaction.NeutralKilling      => "Neutral Killing",
-                RoleFaction.NeutralBenign       => "Neutral Benign",
-                RoleFaction.NeutralEvil         => "Neutral Evil",
-                RoleFaction.NeutralOutlier      => "Neutral Outlier",
-                RoleFaction.CrewInvestigative   => "Crew Investigative",
-                RoleFaction.CrewKilling         => "Crew Killing",
-                RoleFaction.CrewPower           => "Crew Power",
-                RoleFaction.CrewProtective      => "Crew Protective",
-                RoleFaction.CrewSupport         => "Crew Support",
-                _                               => "Crewmate"
+                RoleFaction.Impostor => "Impostor",
+                RoleFaction.Neutral => "Neutral",
+                _ => "Crewmate"
             };
     }
 }
