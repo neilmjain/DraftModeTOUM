@@ -10,10 +10,11 @@ namespace DraftModeTOUM.Managers
 {
     public sealed class DraftRolePool
     {
-        public List<string> Roles { get; } = new List<string>();
-        public Dictionary<string, int> MaxCounts { get; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        public Dictionary<string, int> Weights { get; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        public Dictionary<string, RoleFaction> Factions { get; } = new Dictionary<string, RoleFaction>(StringComparer.OrdinalIgnoreCase);
+        // Keyed by RoleTypes cast to ushort — no name strings in the pool at all
+        public List<ushort>                    RoleIds    { get; } = new();
+        public Dictionary<ushort, int>         MaxCounts  { get; } = new();
+        public Dictionary<ushort, int>         Weights    { get; } = new();
+        public Dictionary<ushort, RoleFaction> Factions   { get; } = new();
     }
 
     public static class RolePoolBuilder
@@ -32,19 +33,15 @@ namespace DraftModeTOUM.Managers
                     $"[RolePoolBuilder] Failed reading role options: {ex.Message}");
             }
 
-            if (pool.Roles.Count == 0)
+            if (pool.RoleIds.Count == 0)
             {
                 DraftModePlugin.Logger.LogWarning(
                     "[RolePoolBuilder] No enabled roles detected — using fallback role list");
-
-                foreach (var roleName in GetAllRoles())
-                {
-                    AddRole(pool, roleName, 1, 100, RoleCategory.GetFaction(roleName));
-                }
+                BuildFallback(pool);
             }
 
             DraftModePlugin.Logger.LogInfo(
-                $"[RolePoolBuilder] Found {pool.Roles.Count} enabled roles");
+                $"[RolePoolBuilder] Found {pool.RoleIds.Count} enabled roles");
 
             return pool;
         }
@@ -54,7 +51,25 @@ namespace DraftModeTOUM.Managers
             var roleOptions = GameOptionsManager.Instance?.CurrentGameOptions?.RoleOptions;
             if (roleOptions == null) return;
 
-            var roles = MiscUtils.AllRegisteredRoles.ToArray();
+            int playerCount = GameData.Instance != null
+                ? GameData.Instance.AllPlayers.ToArray().Count(p => p != null && !p.Disconnected)
+                : 10;
+
+            // GetPotentialRoles() already filters by game mode, role chances, and count —
+            // use it as the authoritative source instead of re-implementing that logic
+            IEnumerable<RoleBehaviour> roles;
+            try
+            {
+                roles = MiscUtils.GetPotentialRoles().ToArray();
+                DraftModePlugin.Logger.LogInfo(
+                    $"[RolePoolBuilder] GetPotentialRoles returned {roles.Count()} roles");
+            }
+            catch (Exception ex)
+            {
+                DraftModePlugin.Logger.LogWarning(
+                    $"[RolePoolBuilder] GetPotentialRoles failed ({ex.Message}), falling back to AllRegisteredRoles");
+                roles = MiscUtils.AllRegisteredRoles.ToArray();
+            }
 
             foreach (var role in roles)
             {
@@ -68,66 +83,65 @@ namespace DraftModeTOUM.Managers
                         continue;
                 }
 
-                // Hard-banned roles — never appear in draft regardless of settings
-                var rn = role.NiceName ?? "";
-                if (IsBannedRole(rn)) continue;
+                if (IsBannedRole(role.NiceName)) continue;
 
-                int count = roleOptions.GetNumPerGame(role.Role);
+                int count  = roleOptions.GetNumPerGame(role.Role);
                 int chance = roleOptions.GetChancePerGame(role.Role);
                 if (count <= 0 || chance <= 0) continue;
 
-                var roleName = role.GetRoleName();
-                // Use RoleCategory for neutrals so killing vs passive is correctly split
-                var faction = role.IsImpostor()
-                    ? RoleFaction.Impostor
-                    : (role.IsNeutral() ? RoleCategory.GetFaction(roleName) : RoleFaction.Crewmate);
+                // Cap count against player count so we never offer a role
+                // more times than there are players who could receive it
+                int cappedCount = Math.Min(count, playerCount);
 
-                AddRole(pool, roleName, count, chance, faction);
+                var faction = role.IsImpostor
+                    ? RoleFaction.Impostor
+                    : ((role is MiraAPI.Roles.ICustomRole cr__ && cr__.Team != ModdedRoleTeams.Crewmate && cr__.Team != ModdedRoleTeams.Impostor)
+                        ? RoleCategory.GetFactionFromRole(role)
+                        : RoleFaction.Crewmate);
+
+                AddRole(pool, (ushort)role.Role, cappedCount, chance, faction);
             }
         }
 
-        // Roles that can never be drafted no matter what the host configures
-        private static readonly HashSet<string> _bannedRoles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "Haunter", "Spectre", "Teleporter", "Pestilence", "Traitor", "Mayor"
-        };
-
-        public static bool IsBannedRole(string roleName) => _bannedRoles.Contains(roleName);
-
-        private static void AddRole(DraftRolePool pool, string roleName, int maxCount, int weight, RoleFaction faction)
-        {
-            if (string.IsNullOrWhiteSpace(roleName)) return;
-            if (!pool.MaxCounts.ContainsKey(roleName))
+        private static readonly HashSet<string> _bannedRoles =
+            new(StringComparer.OrdinalIgnoreCase)
             {
-                pool.Roles.Add(roleName);
-                pool.MaxCounts[roleName] = Math.Max(1, maxCount);
-                pool.Weights[roleName] = Math.Max(1, weight);
-                pool.Factions[roleName] = faction;
+                "Haunter", "Spectre", "Teleporter", "Pestilence", "Traitor", "Mayor"
+            };
+
+        public static bool IsBannedRole(string niceName) => _bannedRoles.Contains(niceName);
+
+        private static void AddRole(DraftRolePool pool, ushort roleId, int maxCount, int weight, RoleFaction faction)
+        {
+            if (!pool.MaxCounts.ContainsKey(roleId))
+            {
+                pool.RoleIds.Add(roleId);
+                pool.MaxCounts[roleId] = Math.Max(1, maxCount);
+                pool.Weights[roleId]   = Math.Max(1, weight);
+                pool.Factions[roleId]  = faction;
             }
             else
             {
-                pool.MaxCounts[roleName] = Math.Max(pool.MaxCounts[roleName], maxCount);
-                pool.Weights[roleName] = Math.Max(pool.Weights[roleName], weight);
+                pool.MaxCounts[roleId] = Math.Max(pool.MaxCounts[roleId], maxCount);
+                pool.Weights[roleId]   = Math.Max(pool.Weights[roleId], weight);
             }
         }
 
-        private static IEnumerable<string> GetAllRoles()
+        private static void BuildFallback(DraftRolePool pool)
         {
-            return new[]
+            if (RoleManager.Instance == null) return;
+            foreach (var role in RoleManager.Instance.AllRoles.ToArray())
             {
-                "Aurial","Forensic","Lookout","Mystic","Seer",
-                "Snitch","Sonar","Trapper", "Deputy", "Sheriff",
-                "Veteran","Vigilante", "Jailor","Monarch","Politician",
-                "Prosecutor","Swapper","Time Lord", "Altruist","Cleric","Medic",
-                "Mirrorcaster","Oracle","Warden", "Engineer","Imitator","Medium",
-                "Plumber","Sentry","Transporter", "Eclipsal","Escapist","Grenadier",
-                "Morphling","Swooper","Venerer", "Ambusher","Bomber","Parasite",
-                "Scavenger","Warlock", "Ambassador","Puppeteer","Spellslinger",
-                "Blackmailer","Hypnotist","Janitor","Miner","Undertaker",
-                "Fairy","Mercenary","Survivor", "Doomsayer","Executioner","Jester",
-                "Arsonist","Glitch","Juggernaut","Plaguebearer",
-                "SoulCollector","Vampire","Werewolf", "Chef","Inquisitor"
-            };
+                if (role == null) continue;
+                if (IsBannedRole(role.NiceName)) continue;
+                if (role.Role is RoleTypes.CrewmateGhost or RoleTypes.ImpostorGhost or RoleTypes.GuardianAngel) continue;
+
+                var faction = role.IsImpostor
+                    ? RoleFaction.Impostor
+                    : ((role is MiraAPI.Roles.ICustomRole cr__ && cr__.Team != ModdedRoleTeams.Crewmate && cr__.Team != ModdedRoleTeams.Impostor) ? RoleCategory.GetFactionFromRole(role) : RoleFaction.Crewmate);
+
+                AddRole(pool, (ushort)role.Role, 1, 100, faction);
+            }
         }
     }
 }

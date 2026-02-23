@@ -2,6 +2,7 @@ using DraftModeTOUM.Managers;
 using DraftModeTOUM.Patches;
 using Reactor.Utilities;
 using System.Collections;
+using System.Collections.Generic;
 using TMPro;
 using TownOfUs.Assets;
 using TownOfUs.Utilities;
@@ -15,21 +16,63 @@ namespace DraftModeTOUM
         public static DraftScreenController Instance { get; private set; }
 
         private GameObject _screenRoot;
-        private string[] _offeredRoles;
+        private ushort[] _offeredRoleIds;
         private bool _hasPicked;
         private TextMeshPro _statusText;
 
-        private static readonly Color BgColor = new Color32(6, 0, 0, 215);
-
         private const string PrefabName = "SelectRoleGame";
+        private const float TeamNameFontSize = 4.5f;
 
-        public static void Show(string[] offeredRoles)
+        // ── Scale / spacing tuned per card count ─────────────────────────────────
+        // The prefab card is 4x6 units at scale 0.55. TOU stacks ~3 cards with
+        // -0.5 spacing. Draft can show up to 9 so we scale down and spread more.
+         // The prefab card is 4x6 units at scale 0.55. TOU stacks ~3 cards with
+       private static float CardScaleForCount(int count) => count switch
+        {
+            <= 3 => 0.55f,
+            <= 4 => 0.55f,
+            <= 5 => 0.55f,
+            <= 6 => 0.55f,
+            <= 7 => 0.55f,
+            <= 8 => 0.55f,
+            _    => 0.55f,
+        };
+
+        // Spacing (in layout group units) between card edges — negative = overlap
+        // For grid mode (>5 cards) this is used for both X and Y (Y halved)
+        private static float SpacingForCount(int count) => count switch
+        {
+            <= 3 => -1f,
+            <= 4 => -1f,
+            <= 5 => -1f,
+            <= 6 => 0f,   // grid: 2 rows of 3, more breathing room
+            <= 8 => 0f,  // grid: 2 rows of 4
+            _    => 0f,   // grid: 2 rows of 5+
+        };
+
+        private static Color GetTeamColor(string teamName)
+{
+    if (string.IsNullOrEmpty(teamName)) return Color.white;
+
+    string lower = teamName.ToLowerInvariant();
+    if (lower.Contains("crewmate")) return new Color32(0,   255, 255, 255);
+    if (lower.Contains("impostor") ||
+        lower.Contains("imposter")) return new Color32(255,   0,   0, 255);
+    if (lower.Contains("neutral"))  return new Color32(180, 180, 180, 255);
+
+    return Color.white;
+}
+        // ── Public API ────────────────────────────────────────────────────────────
+
+        public static void Show(ushort[] roleIds)
         {
             Hide();
+            if (HudManager.Instance?.FullScreen != null)
+                HudManager.Instance.FullScreen.color = Color.clear;
             var go = new GameObject("DraftScreenController");
             DontDestroyOnLoad(go);
             Instance = go.AddComponent<DraftScreenController>();
-            Instance._offeredRoles = offeredRoles;
+            Instance._offeredRoleIds = roleIds;
             Instance.BuildScreen();
         }
 
@@ -48,22 +91,19 @@ namespace DraftModeTOUM
                         Destroy(child.gameObject);
                 }
 
-                // Fade the background out exactly like TOU does on Close()
-                HudManager.Instance.StartCoroutine(
-                    HudManager.Instance.CoFadeFullScreen(BgColor, Color.clear));
             }
 
             Destroy(Instance.gameObject);
             Instance = null;
         }
 
+        // ── Build ─────────────────────────────────────────────────────────────────
+
         private void BuildScreen()
         {
             if (HudManager.Instance == null) return;
-
-            // Fade background in — same as TraitorSelectionMinigame.Begin()
-            HudManager.Instance.StartCoroutine(
-                HudManager.Instance.CoFadeFullScreen(Color.clear, BgColor));
+            if (HudManager.Instance.FullScreen != null)
+                HudManager.Instance.FullScreen.color = Color.clear;
 
             GameObject prefab = null;
             try
@@ -80,9 +120,7 @@ namespace DraftModeTOUM
             if (prefab == null)
             {
                 DraftModePlugin.Logger.LogError("[DraftScreenController] SelectRoleGame prefab not found.");
-                Destroy(gameObject);
-                Instance = null;
-                return;
+                Destroy(gameObject); Instance = null; return;
             }
 
             _screenRoot = Instantiate(prefab);
@@ -99,7 +137,7 @@ namespace DraftModeTOUM
             var statusGo    = _screenRoot.transform.Find("Status");
             var rolesHolder = _screenRoot.transform.Find("Roles");
 
-            // Wire up status text — same as TOU Awake()
+            // Status text
             if (statusGo != null)
             {
                 _statusText = statusGo.GetComponent<TextMeshPro>();
@@ -114,52 +152,73 @@ namespace DraftModeTOUM
 
             if (holderGo == null)
             {
-                Destroy(_screenRoot);
-                Destroy(gameObject);
-                Instance = null;
-                return;
+                Destroy(_screenRoot); Destroy(gameObject); Instance = null; return;
             }
 
             var rolePrefab = holderGo.gameObject;
 
-            // Build card data through the shared pipeline (correct icons, teams, colors)
-            var roleList = new System.Collections.Generic.List<string>();
-            if (_offeredRoles != null) roleList.AddRange(_offeredRoles);
-            var cards = DraftUiManager.BuildCards(roleList);
+            // Build card data via shared pipeline
+            var idList = new List<ushort>();
+            if (_offeredRoleIds != null) idList.AddRange(_offeredRoleIds);
+            var cards = DraftUiManager.BuildCards(idList);
 
-            // Spawn cards — mirrors TraitorSelectionMinigame.Begin()
-            int z = 0;
-            foreach (var card in cards)
+            int totalCards = cards.Count;
+            float cardScale = CardScaleForCount(totalCards);
+            float spacing   = SpacingForCount(totalCards);
+
+            bool useGrid = totalCards > 5;
+
+            if (useGrid)
             {
+                // Disable the layout group entirely — we'll position cards manually
+                var hLayout = rolesHolder?.GetComponent<UnityEngine.UI.HorizontalLayoutGroup>();
+                if (hLayout != null) hLayout.enabled = false;
+
+                // Expand the Roles holder vertically so both rows are visible
+                var rt = rolesHolder?.GetComponent<RectTransform>();
+                if (rt != null) rt.sizeDelta = new Vector2(rt.sizeDelta.x, 12f);
+            }
+            else
+            {
+                // Single row — just override HorizontalLayoutGroup spacing
+                var layoutGroup = rolesHolder?.GetComponent<UnityEngine.UI.HorizontalLayoutGroup>();
+                if (layoutGroup != null)
+                    layoutGroup.spacing = spacing;
+            }
+
+            for (int i = 0; i < totalCards; i++)
+            {
+                var card       = cards[i];
                 int capturedIdx = card.Index;
+
                 var btn = CreateCard(
-                    rolePrefab,
-                    rolesHolder,
-                    card.RoleName,
-                    card.TeamName,
+                    rolePrefab, rolesHolder,
+                    card.RoleName, card.TeamName,
                     card.Icon ?? TouRoleIcons.RandomAny.LoadAsset(),
-                    z,
-                    card.Color);
+                    i, totalCards, card.Color,
+                    cardScale, useGrid, spacing);
 
                 btn.OnClick.RemoveAllListeners();
                 btn.OnClick.AddListener((UnityAction)(() => OnCardClicked(capturedIdx)));
-                z++;
             }
 
-            // Animate cards in — mirrors TraitorSelectionMinigame
-            Coroutines.Start(CoAnimateCards(rolesHolder));
+            Coroutines.Start(CoAnimateCards(rolesHolder, cardScale, useGrid, totalCards));
         }
 
-        // ── Card factory — mirrors TraitorSelectionMinigame.CreateCard() exactly ────────
+        // ── Card factory ──────────────────────────────────────────────────────────
 
         private static PassiveButton CreateCard(
             GameObject rolePrefab,
-            Transform rolesHolder,
-            string roleName,
-            string teamName,
-            Sprite icon,
-            int z,
-            Color color)
+            Transform  rolesHolder,
+            string     roleName,
+            string     teamName,
+            Sprite     icon,
+            int        cardIndex,
+            int        totalCards,
+            Color      color,
+            float      cardScale,
+            bool       useGrid = false,
+            float      spacing = 0f)
         {
             var newRoleObj    = UnityEngine.Object.Instantiate(rolePrefab, rolesHolder);
             var actualCard    = newRoleObj!.transform.GetChild(0);
@@ -169,7 +228,14 @@ namespace DraftModeTOUM
             var passiveButton = actualCard.GetComponent<PassiveButton>();
             var rollover      = actualCard.GetComponent<ButtonRolloverHandler>();
 
-            // Z-depth hover push — identical to TOU
+            // In grid mode tilt per column, otherwise per global index
+            // so bottom row cards don't inherit extreme rotation from high cardIndex
+            int   tiltIndex = useGrid ? (cardIndex % Mathf.CeilToInt(totalCards / 2f)) : cardIndex;
+            float tiltScale = Mathf.Lerp(1f, 0.25f, Mathf.InverseLerp(3f, 9f, totalCards));
+            float randZ     = (-10f + tiltIndex * 5f) * tiltScale
+                              + UnityEngine.Random.Range(-1.5f, 1.5f) * tiltScale;
+
+            // Hover: push forward in Z — same feel as TOU
             passiveButton.OnMouseOver.AddListener((UnityAction)(() =>
             {
                 var pos = newRoleObj.transform.localPosition;
@@ -181,67 +247,103 @@ namespace DraftModeTOUM
                 newRoleObj.transform.localPosition = new Vector3(pos.x, pos.y, pos.z + 10f);
             }));
 
-            // Random tilt + Z stacking — identical math to TOU
-            float randZ = -10f + z * 5f + UnityEngine.Random.Range(-1.5f, 1.5f);
             newRoleObj.transform.localRotation = Quaternion.Euler(0f, 0f, -randZ);
-            newRoleObj.transform.localPosition = new Vector3(
-                newRoleObj.transform.localPosition.x,
-                newRoleObj.transform.localPosition.y,
-                z);
+
+            if (useGrid)
+            {
+                // 2-row manual layout: split into top and bottom rows
+                int cols    = Mathf.CeilToInt(totalCards / 2f);
+                int row     = cardIndex / cols;
+                int col     = cardIndex % cols;
+
+                // Card width/height in world units at chosen scale
+                float cardW = 2.5f * cardScale;
+                float cardH = 3.7f * cardScale;
+                float xGap  = cardW + spacing;
+                float yGap  = cardH + spacing * 0.5f;
+
+                // Centre the grid horizontally
+                float totalW = cols * xGap - spacing;
+                float startX = -totalW / 2f + cardW / 2f;
+                // Row 0 = top, Row 1 = bottom
+                float startY = yGap / 2f;
+
+                float xPos = startX + col * xGap;
+                float yPos = startY - row * yGap;
+
+                newRoleObj.transform.localPosition = new Vector3(xPos, yPos, cardIndex);
+            }
+            else
+            {
+                // X managed by HorizontalLayoutGroup
+                newRoleObj.transform.localPosition = new Vector3(
+                    newRoleObj.transform.localPosition.x, 0f, cardIndex);
+            }
+
+            newRoleObj.transform.localScale = Vector3.one * cardScale;
 
             roleText.text    = roleName;
             teamText.text    = teamName;
             roleImage.sprite = icon;
-            roleImage.SetSizeLimit(2.8f);  // TOU icon sizing call
+            roleImage.SetSizeLimit(2.8f);
+            var cardBgRenderer = actualCard.GetComponent<SpriteRenderer>();
+            if (cardBgRenderer != null) cardBgRenderer.color = color;
+            roleImage.color = Color.white;
 
+            // Team text: shrink font cap so it fits on smaller cards
+            // Prefab sets fontSizeMax=4; we reduce it proportionally
+            teamText.fontSizeMax = Mathf.Lerp(4f, 2f, Mathf.InverseLerp(3f, 9f, totalCards));
+            teamText.enableAutoSizing = true;
+            rollover.OutColor  = color;
             rollover.OverColor = color;
             roleText.color     = color;
-            teamText.color     = color;
+            teamText.fontSizeMax = Mathf.Lerp(TeamNameFontSize, TeamNameFontSize * 0.5f, Mathf.InverseLerp(3f, 9f, totalCards));
+            teamText.color       = GetTeamColor(teamName);
 
             return passiveButton;
         }
 
-        // ── Card animation — mirrors TraitorSelectionMinigame.CoAnimateCards() ──────────
+        // ── Animation ─────────────────────────────────────────────────────────────
 
-        private static IEnumerator CoAnimateCards(Transform rolesHolder)
+        private static IEnumerator CoAnimateCards(Transform rolesHolder, float cardScale, bool useGrid, int totalCards)
         {
             if (rolesHolder == null) yield break;
-
             int currentCard = 0;
+            int cols = Mathf.CeilToInt(totalCards / 2f);
             foreach (var o in rolesHolder)
             {
                 var card = o.Cast<Transform>();
                 if (card == null) continue;
-
                 var child = card.GetChild(0);
-                yield return CoAnimateCardIn(child, currentCard);
-                Coroutines.Start(MiscUtils.BetterBloop(child, finalSize: 0.55f, duration: 0.22f, intensity: 0.16f));
-                yield return new WaitForSeconds(0.1f);
+                // Use column index for tilt in grid mode so rows have matching tilt range
+                int animIndex = useGrid ? (currentCard % cols) : currentCard;
+                yield return CoAnimateCardIn(child, animIndex);
+                Coroutines.Start(MiscUtils.BetterBloop(child, finalSize: cardScale, duration: 0.22f, intensity: 0.16f));
+                yield return new WaitForSeconds(0.08f);
                 currentCard++;
             }
+            // Signal that all cards are shown — start the timer now
+            if (Instance != null) Instance._cardsReady = true;
+            DraftNetworkHelper.NotifyPickerReady();
         }
-
-        // ── Slide-in — mirrors TraitorSelectionMinigame.CoAnimateCardIn() exactly ───────
 
         private static IEnumerator CoAnimateCardIn(Transform card, int currentCard)
         {
-            float randY = (currentCard * currentCard * 0.5f - currentCard) * 0.1f
-                          + UnityEngine.Random.Range(-0.15f, 0f);
+            // Slide in from below — identical math to TOU, just smaller randY offset
+            float randY = (currentCard * currentCard * 0.5f - currentCard) * 0.05f
+                          + UnityEngine.Random.Range(-0.08f, 0f);
             float randZ = -10f + currentCard * 5f + UnityEngine.Random.Range(-1.5f, 0f);
             if (currentCard == 0) { randY = 0f; randZ = -2f; }
 
             card.localRotation = Quaternion.Euler(0f, 0f, -randZ);
-            card.localPosition = new Vector3(
-                card.localPosition.x,
-                card.localPosition.y - 5f,
-                card.localPosition.z);
+            card.localPosition = new Vector3(card.localPosition.x, card.localPosition.y - 5f, card.localPosition.z);
             card.localRotation = Quaternion.Euler(0f, 0f, 14f);
-            card.localScale    = new Vector3(0.3f, 0.3f, 0.3f);
+            card.localScale    = new Vector3(0.15f, 0.15f, 0.15f);
             card.parent.gameObject.SetActive(true);
 
-            for (float timer = 0f; timer < 0.4f; timer += Time.deltaTime)
+            for (float timer = 0f; timer < 0.35f; timer += Time.deltaTime)
             {
-                float t = timer / 0.4f;
+                float t = timer / 0.35f;
                 card.localPosition = new Vector3(
                     card.localPosition.x,
                     Mathf.SmoothStep(-5f, randY, t),
@@ -255,14 +357,17 @@ namespace DraftModeTOUM
             card.localRotation = Quaternion.Euler(0f, 0f, -randZ);
         }
 
-        // ── Timer display ─────────────────────────────────────────────────────────────
+        // ── Timer ─────────────────────────────────────────────────────────────────
 
         private float _localTimeLeft = -1f;
+        private bool  _cardsReady    = false;
 
         private void Update()
         {
-            if (_hasPicked || _statusText == null) return;
-            if (!DraftManager.IsDraftActive) return;
+            if (HudManager.Instance?.FullScreen != null)
+                HudManager.Instance.FullScreen.color = Color.clear;
+
+            if (_hasPicked || _statusText == null || !DraftManager.IsDraftActive || !_cardsReady) return;
 
             int secs;
             if (AmongUsClient.Instance.AmHost)
@@ -282,7 +387,7 @@ namespace DraftModeTOUM
                 $"{secs} Second{(secs != 1 ? "s" : "")} Remain</color>";
         }
 
-        // ── Pick handling ─────────────────────────────────────────────────────────────
+        // ── Pick ──────────────────────────────────────────────────────────────────
 
         private void OnCardClicked(int index)
         {
