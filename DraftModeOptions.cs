@@ -38,13 +38,4 @@ public sealed class DraftModeOptions : AbstractOptionGroup
 
     [ModdedNumberOption("Turn Duration", 5f, 60f, 1f, MiraNumberSuffixes.Seconds, "0")]
     public float TurnDurationSeconds { get; set; } = 10f;
-
-    [ModdedNumberOption("Max Impostors", 0f, 5f, 1f, MiraNumberSuffixes.None, "0")]
-    public float MaxImpostors { get; set; } = 2f;
-
-    [ModdedNumberOption("Max Neutral Killings", 0f, 10f, 1f, MiraNumberSuffixes.None, "0")]
-    public float MaxNeutralKillings { get; set; } = 2f;
-
-    [ModdedNumberOption("Max Neutral Other", 0f, 10f, 1f, MiraNumberSuffixes.None, "0")]
-    public float MaxNeutralPassives { get; set; } = 3f;
 }
