@@ -324,8 +324,10 @@ namespace DraftModeTOUM.Managers
             _totalNeutKillSlotsInList = 0;
             _totalNeutSlotsInList     = 0;
 
-            foreach (var slot in _turnSlots)
+            int activePlayers = TurnOrder.Count;
+            for (int i = 0; i < activePlayers && i < _turnSlots.Count; i++)
             {
+                var slot = _turnSlots[i];
                 bool hasImp  = slot.ValidRoles.Any(r =>
                     _roleFactions.TryGetValue(r, out var f) && f == RoleFaction.Impostor);
                 bool hasNK   = slot.ValidRoles.Any(r =>
@@ -419,10 +421,12 @@ namespace DraftModeTOUM.Managers
             //               so we never show a faction that has no slot in this lobby.
             var bucketRoles = GetAvailableRolesForSlot(slot);
 
+            int activePlayers = TurnOrder.Count; // only slots 0..(activePlayers-1) exist in this lobby
             var otherRoles = new List<string>();
-            for (int i = 0; i < _turnSlots.Count; i++)
+            for (int i = 0; i < activePlayers; i++)
             {
                 if (i == CurrentTurn - 1) continue; // skip current slot
+                if (i >= _turnSlots.Count) continue;
                 foreach (var r in _turnSlots[i].ValidRoles)
                 {
                     if (bucketRoles.Contains(r, StringComparer.OrdinalIgnoreCase)) continue;
