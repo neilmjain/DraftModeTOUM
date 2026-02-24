@@ -155,6 +155,10 @@ namespace DraftModeTOUM.Managers
 
             if (cancelledBeforeCompletion)
             {
+                // Only clear pending roles if the draft was cancelled, not completed.
+                // When draft completes normally, PendingRoleAssignments must survive
+                // until IntroCutsceneBeginPatch applies them on game start.
+                PendingRoleAssignments.Clear();
                 DraftRecapOverlay.Hide();
                 DraftStatusOverlay.SetState(OverlayState.Hidden);
             }
@@ -305,8 +309,10 @@ namespace DraftModeTOUM.Managers
 
             if (CurrentTurn > TurnOrder.Count)
             {
-                IsDraftActive = false;
+                // Draft is complete — populate PendingRoleAssignments BEFORE Reset()
                 ApplyAllRoles();
+
+                IsDraftActive = false;
                 DraftUiManager.CloseAll();
 
                 DraftStatusOverlay.SetState(OverlayState.BackgroundOnly);
@@ -314,6 +320,8 @@ namespace DraftModeTOUM.Managers
                 var recapEntries = BuildRecapEntries();
                 DraftNetworkHelper.BroadcastRecap(recapEntries, ShowRecap);
 
+                // Reset draft state but preserve PendingRoleAssignments —
+                // pass cancelledBeforeCompletion: false so Reset() does NOT clear them.
                 Reset(cancelledBeforeCompletion: false);
                 TriggerEndDraftSequence();
             }
@@ -343,8 +351,9 @@ namespace DraftModeTOUM.Managers
             return entries;
         }
 
-        // Pending assignments — populated when draft ends, consumed when game starts
-        // Keyed by PlayerId so we can look up quickly in the IntroCutscene patch
+        // Pending assignments — populated when draft ends, consumed when game starts.
+        // NOT cleared by Reset(cancelledBeforeCompletion: false) so they survive
+        // until IntroCutsceneBeginPatch fires after BeginGame().
         public static readonly Dictionary<byte, RoleTypes> PendingRoleAssignments = new();
 
         private static void ApplyAllRoles()
@@ -362,6 +371,9 @@ namespace DraftModeTOUM.Managers
                     $"[DraftManager] Queued {(RoleTypes)state.ChosenRoleId.Value} " +
                     $"for player {state.PlayerId} — will apply on game start");
             }
+
+            DraftModePlugin.Logger.LogInfo(
+                $"[DraftManager] PendingRoleAssignments populated with {PendingRoleAssignments.Count} entries");
         }
 
         /// <summary>
