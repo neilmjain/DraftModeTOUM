@@ -21,7 +21,7 @@ namespace DraftModeTOUM
         private TextMeshPro _statusText;
 
         private const string PrefabName = "SelectRoleGame";
-        private const float TeamNameFontSize = 4.5f;
+        private const float TeamNameFontSize = 3.8f;
 
         // ── Scale / spacing tuned per card count ─────────────────────────────────
         // The prefab card is 4x6 units at scale 0.55. TOU stacks ~3 cards with
@@ -294,8 +294,9 @@ namespace DraftModeTOUM
             // Prefab sets fontSizeMax=4; we reduce it proportionally
             teamText.fontSizeMax = Mathf.Lerp(4f, 2f, Mathf.InverseLerp(3f, 9f, totalCards));
             teamText.enableAutoSizing = true;
+
             rollover.OutColor  = color;
-            rollover.OverColor = color;
+            rollover.OverColor = Color.white;
             roleText.color     = color;
             teamText.fontSizeMax = Mathf.Lerp(TeamNameFontSize, TeamNameFontSize * 0.5f, Mathf.InverseLerp(3f, 9f, totalCards));
             teamText.color       = GetTeamColor(teamName);

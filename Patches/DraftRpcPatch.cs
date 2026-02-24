@@ -13,7 +13,8 @@ namespace DraftModeTOUM.Patches
         StartDraft   = 223,
         Recap        = 224,
         SlotNotify   = 225,
-        PickerReady  = 226
+        PickerReady    = 226,
+        PickConfirmed  = 227
     }
 
     [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
@@ -83,6 +84,24 @@ namespace DraftModeTOUM.Patches
                     {
                         int count = reader.ReadInt32();
                         for (int i = 0; i < count; i++) { reader.ReadByte(); reader.ReadInt32(); }
+                    }
+                    return false;
+
+                case DraftRpc.PickConfirmed:
+                    if (!AmongUsClient.Instance.AmHost)
+                    {
+                        int  slot   = reader.ReadInt32();
+                        var  roleId = reader.ReadUInt16();
+                        var  state  = DraftManager.GetStateForSlot(slot);
+                        if (state != null)
+                        {
+                            state.ChosenRoleId = roleId;
+                            state.HasPicked    = true;
+                        }
+                    }
+                    else
+                    {
+                        reader.ReadInt32(); reader.ReadUInt16(); // consume
                     }
                     return false;
 
@@ -209,6 +228,21 @@ namespace DraftModeTOUM.Patches
                 Hazel.SendOption.Reliable, -1);
             writer.Write(pidToSlot.Count);
             foreach (var kvp in pidToSlot) { writer.Write(kvp.Key); writer.Write(kvp.Value); }
+            AmongUsClient.Instance.FinishRpcImmediately(writer);
+        }
+
+        public static void BroadcastPickConfirmed(int slot, ushort roleId)
+        {
+            // Update host state directly
+            var state = DraftManager.GetStateForSlot(slot);
+            if (state != null) { state.ChosenRoleId = roleId; state.HasPicked = true; }
+
+            var writer = AmongUsClient.Instance.StartRpcImmediately(
+                PlayerControl.LocalPlayer.NetId,
+                (byte)DraftRpc.PickConfirmed,
+                Hazel.SendOption.Reliable, -1);
+            writer.Write(slot);
+            writer.Write(roleId);
             AmongUsClient.Instance.FinishRpcImmediately(writer);
         }
 
