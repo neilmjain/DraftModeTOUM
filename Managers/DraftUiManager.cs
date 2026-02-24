@@ -1,91 +1,184 @@
 using MiraAPI.Roles;
+using MiraAPI.LocalSettings;
+using MiraAPI.Utilities;
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using AmongUs.GameOptions;
+using DraftModeTOUM.Patches;
+using TownOfUs.Assets;
+using TownOfUs.Utilities;
+using UnityEngine;
 
 namespace DraftModeTOUM.Managers
 {
-    public enum RoleFaction
+    public static class DraftUiManager
     {
-        Crewmate,
-        Impostor,
-        Neutral,
-        NeutralKilling
-    }
+        private static DraftCircleMinigame? _circleMinigame;
 
-    public static class RoleCategory
-    {
-        private static readonly HashSet<string> NeutralKillingRoles =
-            new(System.StringComparer.OrdinalIgnoreCase)
-            {
-                "Arsonist", "Glitch", "Juggernaut", "Plaguebearer",
-                "Pestilence", "SoulCollector", "Vampire", "Werewolf"
-            };
-
-        private static readonly HashSet<string> NeutralOtherRoles =
-            new(System.StringComparer.OrdinalIgnoreCase)
-            {
-                "Amnesiac", "Fairy", "Mercenary", "Survivor",
-                "Doomsayer", "Executioner", "Jester", "Spectre",
-                "Chef", "Inquisitor"
-            };
-
-        /// <summary>
-        /// Resolve faction from a live RoleBehaviour.
-        /// IsImpostor is a property on RoleBehaviour.
-        /// Neutral detection goes through ICustomRole.Team since RoleBehaviour
-        /// has no IsNeutral member — this matches how TraitorSelectionMinigame does it.
-        /// </summary>
-        public static RoleFaction GetFactionFromRole(RoleBehaviour role)
+        private static bool UseCircle
         {
-            if (role == null) return RoleFaction.Crewmate;
-
-            // IsImpostor is a bool property on RoleBehaviour
-            if (role.IsImpostor) return RoleFaction.Impostor;
-
-            // Neutral team check via ICustomRole.Team (same approach as TOU source)
-            if (role is ICustomRole customRole &&
-                customRole.Team != ModdedRoleTeams.Crewmate &&
-                customRole.Team != ModdedRoleTeams.Impostor)
+            get
             {
-                // Distinguish neutral killing vs neutral passive by NiceName
-                string normalized = Normalize(role.NiceName);
-                if (NeutralKillingRoles.Contains(normalized)) return RoleFaction.NeutralKilling;
-                return RoleFaction.Neutral;
+                var local = LocalSettingsTabSingleton<DraftModeLocalSettings>.Instance;
+                if (local != null && local.OverrideUiStyle.Value)
+                    return local.UseCircleStyle.Value;
+                return MiraAPI.GameOptions.OptionGroupSingleton<DraftModeOptions>.Instance.UseCircleStyle;
             }
-
-            return RoleFaction.Crewmate;
         }
 
-        /// <summary>
-        /// String-based fallback — used only when a live RoleBehaviour isn't available.
-        /// </summary>
-        public static RoleFaction GetFaction(string roleName)
-        {
-            string normalized = Normalize(roleName);
-            if (NeutralKillingRoles.Contains(normalized)) return RoleFaction.NeutralKilling;
-            if (NeutralOtherRoles.Contains(normalized))   return RoleFaction.Neutral;
+        // ── Entry points ─────────────────────────────────────────────────────────
 
-            // Try to resolve via RoleManager
-            if (RoleManager.Instance != null)
+        /// <summary>
+        /// Called on the client whose turn it is. roleIds come from the host
+        /// but are resolved locally — the host's name/rename never reaches the UI.
+        /// </summary>
+        public static void ShowPicker(List<ushort> roleIds)
+        {
+            if (HudManager.Instance == null || roleIds == null || roleIds.Count == 0) return;
+            DraftStatusOverlay.SetState(OverlayState.BackgroundOnly);
+
+            if (UseCircle)
+                ShowCircle(roleIds);
+            else
+                DraftScreenController.Show(roleIds.ToArray());
+        }
+
+        public static void RefreshTurnList()
+        {
+            if (UseCircle && _circleMinigame != null &&
+                _circleMinigame.gameObject != null && _circleMinigame.gameObject.activeSelf)
+                _circleMinigame.RefreshTurnList();
+        }
+
+        public static void CloseAll()
+        {
+            DraftScreenController.Hide();
+
+            var circle = _circleMinigame;
+            _circleMinigame = null;
+            if (circle != null)
             {
-                foreach (var r in RoleManager.Instance.AllRoles.ToArray())
+                try
                 {
-                    if (r == null) continue;
-                    if (Normalize(r.NiceName) != normalized) continue;
-                    return GetFactionFromRole(r);
+                    bool alive = false;
+                    try { alive = circle.gameObject != null && circle.gameObject.activeSelf; } catch { }
+                    if (alive) circle.Close();
+                    else
+                    {
+                        bool exists = false;
+                        try { exists = circle.gameObject != null; } catch { }
+                        if (exists) UnityEngine.Object.Destroy(circle.gameObject);
+                    }
                 }
+                catch { }
             }
 
-            return RoleFaction.Crewmate;
+            if (DraftManager.IsDraftActive)
+                DraftStatusOverlay.SetState(OverlayState.Waiting);
         }
 
-        public static bool IsNeutralKilling(string roleName) =>
-            NeutralKillingRoles.Contains(Normalize(roleName));
+        // ── Card building ────────────────────────────────────────────────────────
 
-        public static bool IsNeutral(string roleName) =>
-            NeutralOtherRoles.Contains(Normalize(roleName));
+        /// <summary>
+        /// Builds DraftRoleCard list from role IDs sent by the host.
+        /// Every piece of display data (name, team, icon, color) is resolved
+        /// entirely from the client's local RoleManager — the host string never appears.
+        /// </summary>
+        public static List<DraftRoleCard> BuildCards(List<ushort> roleIds)
+        {
+            var cards = new List<DraftRoleCard>();
+            for (int i = 0; i < roleIds.Count; i++)
+            {
+                ushort id = roleIds[i];
+                var role = ResolveRole(id);
 
-        private static string Normalize(string s) =>
-            (s ?? string.Empty).Replace(" ", "").Replace("-", "");
+                // Everything resolved locally — host rename has zero effect
+                string displayName = role?.NiceName ?? $"Role {id}";
+                string team = GetTeamLabel(role) ?? "Unknown";
+                Sprite icon = GetRoleIcon(role);
+                Color color = GetRoleColor(role);
+
+                cards.Add(new DraftRoleCard(displayName, team, icon, color, i));
+            }
+
+            if (DraftManager.ShowRandomOption)
+                cards.Add(new DraftRoleCard(
+                    "Random", "Random",
+                    TouRoleIcons.RandomAny.LoadAsset(),
+                    Color.white,
+                    roleIds.Count));
+
+            return cards;
+        }
+
+        // ── Role resolution ──────────────────────────────────────────────────────
+
+        /// <summary>Resolve a RoleBehaviour from a RoleTypes ushort ID.</summary>
+        public static RoleBehaviour? ResolveRole(ushort roleId)
+        {
+            try { return RoleManager.Instance?.GetRole((RoleTypes)roleId); }
+            catch { return null; }
+        }
+
+        public static string GetTeamLabel(RoleBehaviour? role)
+        {
+            if (role == null) return "Unknown";
+            try { return MiscUtils.GetParsedRoleAlignment(role); } catch { }
+            return RoleCategory.GetFactionFromRole(role) switch
+            {
+                RoleFaction.Impostor => "Impostor",
+                RoleFaction.NeutralKilling => "Neutral Killing",
+                RoleFaction.Neutral => "Neutral",
+                _ => "Crewmate"
+            };
+        }
+
+        public static Sprite GetRoleIcon(RoleBehaviour? role)
+        {
+            if (role is ICustomRole cr && cr.Configuration.Icon != null)
+            {
+                try { return cr.Configuration.Icon.LoadAsset(); } catch { }
+            }
+            if (role?.RoleIconSolid != null) return role.RoleIconSolid;
+            return TouRoleIcons.RandomAny.LoadAsset();
+        }
+
+        public static Color GetRoleColor(RoleBehaviour? role)
+        {
+            if (role is ICustomRole cr) return cr.RoleColor;
+            if (role != null) return role.TeamColor;
+            return Color.white;
+        }
+
+        // ── Circle UI ────────────────────────────────────────────────────────────
+
+        private static void ShowCircle(List<ushort> roleIds)
+        {
+            EnsureCircleMinigame();
+            if (_circleMinigame == null) return;
+            var cards = BuildCards(roleIds);
+            _circleMinigame.Open(cards, OnPickSelected);
+        }
+
+        private static void EnsureCircleMinigame()
+        {
+            if (_circleMinigame != null)
+            {
+                bool destroyed = false;
+                try { destroyed = _circleMinigame.gameObject == null; } catch { destroyed = true; }
+                if (destroyed) _circleMinigame = null;
+            }
+            if (_circleMinigame == null)
+                _circleMinigame = DraftCircleMinigame.Create();
+        }
+
+        private static void OnPickSelected(int index)
+        {
+            var circle = _circleMinigame;
+            _circleMinigame = null;
+            try { circle?.Close(); } catch { }
+            DraftNetworkHelper.SendPickToHost(index);
+        }
     }
 }
