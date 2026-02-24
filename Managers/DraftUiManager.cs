@@ -54,6 +54,7 @@ namespace DraftModeTOUM.Managers
         public static void CloseAll()
         {
             DraftScreenController.Hide();
+            // Panel persists between turns — DraftManager.Reset() closes it
 
             var circle = _circleMinigame;
             _circleMinigame = null;
