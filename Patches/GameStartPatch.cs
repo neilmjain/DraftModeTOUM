@@ -1,4 +1,4 @@
-using DraftModeTOUM.Managers;
+﻿using DraftModeTOUM.Managers;
 using HarmonyLib;
 
 namespace DraftModeTOUM.Patches
