@@ -1,4 +1,6 @@
-﻿using System.Collections.Generic;
+using MiraAPI.Roles;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace DraftModeTOUM.Managers
 {
@@ -10,55 +12,80 @@ namespace DraftModeTOUM.Managers
         NeutralKilling
     }
 
-    // ROLES BELOW ARE IMPOSTOR ROLES.
-
     public static class RoleCategory
     {
-        private static readonly HashSet<string> ImpostorRoles = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
-        {
-            // Concealing
-            "Eclipsal", "Escapist", "Grenadier", "Morphling", "Swooper", "Venerer",
-            // Killing
-            "Ambusher", "Bomber", "Parasite", "Scavenger", "Warlock",
-            // Power
-            "Ambassador", "Puppeteer", "Spellslinger", "Traitor",
-            // Support
-            "Blackmailer", "Hypnotist", "Janitor", "Miner", "Undertaker"
-        };
+        private static readonly HashSet<string> NeutralKillingRoles =
+            new(System.StringComparer.OrdinalIgnoreCase)
+            {
+                "Arsonist", "Glitch", "Juggernaut", "Plaguebearer",
+                "Pestilence", "SoulCollector", "Vampire", "Werewolf"
+            };
 
-        private static readonly HashSet<string> NeutralKillingRoles = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
-        {
-            "Arsonist", "Glitch", "Juggernaut", "Plaguebearer", "Pestilence", "SoulCollector", "Vampire", "Werewolf"
-        };
+        private static readonly HashSet<string> NeutralOtherRoles =
+            new(System.StringComparer.OrdinalIgnoreCase)
+            {
+                "Amnesiac", "Fairy", "Mercenary", "Survivor",
+                "Doomsayer", "Executioner", "Jester", "Spectre",
+                "Chef", "Inquisitor"
+            };
 
-        private static readonly HashSet<string> NeutralOtherRoles = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
+        /// <summary>
+        /// Resolve faction from a live RoleBehaviour.
+        /// IsImpostor is a property on RoleBehaviour.
+        /// Neutral detection goes through ICustomRole.Team since RoleBehaviour
+        /// has no IsNeutral member — this matches how TraitorSelectionMinigame does it.
+        /// </summary>
+        public static RoleFaction GetFactionFromRole(RoleBehaviour role)
         {
-            // Benign
-            "Amnesiac", "Fairy", "Mercenary", "Survivor",
-            // Evil
-            "Doomsayer", "Executioner", "Jester", "Spectre",
-            // Outlier
-            "Chef", "Inquisitor"
-        };
+            if (role == null) return RoleFaction.Crewmate;
 
-        public static RoleFaction GetFaction(string roleName)
-        {
-            var normalized = Normalize(roleName);
-            if (ImpostorRoles.Contains(normalized))      return RoleFaction.Impostor;
-            if (NeutralKillingRoles.Contains(normalized)) return RoleFaction.NeutralKilling;
-            if (NeutralOtherRoles.Contains(normalized)) return RoleFaction.Neutral;
+            // IsImpostor is a bool property on RoleBehaviour
+            if (role.IsImpostor) return RoleFaction.Impostor;
+
+            // Neutral team check via ICustomRole.Team (same approach as TOU source)
+            if (role is ICustomRole customRole &&
+                customRole.Team != ModdedRoleTeams.Crewmate &&
+                customRole.Team != ModdedRoleTeams.Impostor)
+            {
+                // Distinguish neutral killing vs neutral passive by NiceName
+                string normalized = Normalize(role.NiceName);
+                if (NeutralKillingRoles.Contains(normalized)) return RoleFaction.NeutralKilling;
+                return RoleFaction.Neutral;
+            }
+
             return RoleFaction.Crewmate;
         }
 
-        public static bool IsImpostor(string roleName)       => ImpostorRoles.Contains(Normalize(roleName));
-        public static bool IsNeutralKilling(string roleName) => NeutralKillingRoles.Contains(Normalize(roleName));
-        public static bool IsNeutral(string roleName)        => NeutralOtherRoles.Contains(Normalize(roleName));
-
-        private static string Normalize(string roleName)
+        /// <summary>
+        /// String-based fallback — used only when a live RoleBehaviour isn't available.
+        /// </summary>
+        public static RoleFaction GetFaction(string roleName)
         {
-            return (roleName ?? string.Empty)
-                .Replace(" ", string.Empty)
-                .Replace("-", string.Empty);
+            string normalized = Normalize(roleName);
+            if (NeutralKillingRoles.Contains(normalized)) return RoleFaction.NeutralKilling;
+            if (NeutralOtherRoles.Contains(normalized))   return RoleFaction.Neutral;
+
+            // Try to resolve via RoleManager
+            if (RoleManager.Instance != null)
+            {
+                foreach (var r in RoleManager.Instance.AllRoles.ToArray())
+                {
+                    if (r == null) continue;
+                    if (Normalize(r.NiceName) != normalized) continue;
+                    return GetFactionFromRole(r);
+                }
+            }
+
+            return RoleFaction.Crewmate;
         }
+
+        public static bool IsNeutralKilling(string roleName) =>
+            NeutralKillingRoles.Contains(Normalize(roleName));
+
+        public static bool IsNeutral(string roleName) =>
+            NeutralOtherRoles.Contains(Normalize(roleName));
+
+        private static string Normalize(string s) =>
+            (s ?? string.Empty).Replace(" ", "").Replace("-", "");
     }
 }
