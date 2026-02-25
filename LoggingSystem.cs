@@ -3,7 +3,7 @@ using BepInEx.Logging;
 namespace DraftModeTOUM
 {
     /// <summary>
-    /// Centralized logging system for DraftMode.
+    /// Centralized logging system for DraftMode. 
     /// Set ENABLE_DEBUG = true below to show debug messages.
     /// Set ENABLE_DEBUG = false to completely disable debug logging in the build.
     /// </summary>
