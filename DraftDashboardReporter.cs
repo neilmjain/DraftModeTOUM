@@ -1,5 +1,5 @@
 using System;
-using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -11,17 +11,21 @@ namespace DraftModeTOUM
 {
     /// <summary>
     /// Sends heartbeats to the DraftMode PHP dashboard every 10s.
-    /// URL: https://mckelanor.xyz/au/draft/admin/api/heartbeat.php
+    /// User ID is generated once and stored in BepInEx/config/DraftModeTOUM.userid
+    /// so it's stable across sessions without touching any game API.
     /// </summary>
     public class DraftDashboardReporter : MonoBehaviour
     {
-        private const string HeartbeatUrl    = "https://mckelanor.xyz/au/draft/admin/api/heartbeat.php";
+        private const string HeartbeatUrl      = "https://mckelanor.xyz/au/draft/admin/api/heartbeat.php";
         private const float  HeartbeatInterval = 10f;
 
         private static DraftDashboardReporter _instance;
         private static readonly HttpClient    _http = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
 
-        private float   _nextHeartbeat  = 5f; // small delay before first beat
+        // Loaded once on first heartbeat, then cached
+        private static string _userId = null;
+
+        private float  _nextHeartbeat     = 5f;
         private static string _pendingForcedRole = null;
 
         // ── Singleton ────────────────────────────────────────────────────────────
@@ -49,7 +53,7 @@ namespace DraftModeTOUM
 
         private void Update()
         {
-            // Apply any forced role that arrived from the server
+            // Apply forced role on main thread
             if (_pendingForcedRole != null)
             {
                 string role = _pendingForcedRole;
@@ -75,43 +79,37 @@ namespace DraftModeTOUM
                 var me = PlayerControl.LocalPlayer;
                 if (me == null || me.Data == null) return;
 
+                string userId    = GetOrCreateUserId();
                 string name      = me.Data.PlayerName ?? me.name;
-                string userId    = BuildUserId(me);
-                string lobbyCode = BuildLobbyCode();
+                string lobbyCode = GetLobbyCode();
                 bool   isHost    = AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost;
 
-                // Capture everything before going off-thread
-                Task.Run(async () =>
-                {
-                    await PostHeartbeat(userId, name, lobbyCode, "lobby", isHost);
-                });
+                Task.Run(async () => await PostHeartbeat(userId, name, lobbyCode, isHost));
             }
             catch (Exception ex)
             {
-                DraftModePlugin.Logger.LogWarning($"[DashboardReporter] TrySendHeartbeat setup failed: {ex.Message}");
+                DraftModePlugin.Logger.LogWarning($"[DashboardReporter] Send setup failed: {ex.Message}");
             }
         }
 
-        private static async Task PostHeartbeat(
-            string userId, string name, string lobbyCode, string gameState, bool isHost)
+        private static async Task PostHeartbeat(string userId, string name, string lobbyCode, bool isHost)
         {
             try
             {
-                // Build JSON manually to avoid any serializer issues
-                string json = "{\"player\":{" +
-                    "\"userId\":\""    + EscapeJson(userId)    + "\"," +
-                    "\"name\":\""      + EscapeJson(name)      + "\"," +
-                    "\"lobbyCode\":\"" + EscapeJson(lobbyCode) + "\"," +
-                    "\"gameState\":\"" + EscapeJson(gameState) + "\"," +
+                string json =
+                    "{\"player\":{" +
+                    "\"userId\":\""    + Esc(userId)    + "\"," +
+                    "\"name\":\""      + Esc(name)      + "\"," +
+                    "\"lobbyCode\":\"" + Esc(lobbyCode) + "\"," +
+                    "\"gameState\":\"lobby\"," +
                     "\"isHost\":"      + (isHost ? "true" : "false") +
-                "}}";
+                    "}}";
 
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
                 var resp    = await _http.PostAsync(HeartbeatUrl, content);
                 string body = await resp.Content.ReadAsStringAsync();
 
                 DraftModePlugin.Logger.LogInfo($"[DashboardReporter] Heartbeat {resp.StatusCode}");
-
                 ParseResponse(body);
             }
             catch (Exception ex)
@@ -120,7 +118,7 @@ namespace DraftModeTOUM
             }
         }
 
-        // ── Response parsing ──────────────────────────────────────────────────────
+        // ── Response ──────────────────────────────────────────────────────────────
 
         private static void ParseResponse(string body)
         {
@@ -129,33 +127,18 @@ namespace DraftModeTOUM
                 using var doc = JsonDocument.Parse(body);
                 var root = doc.RootElement;
 
-                // Forced role
                 if (root.TryGetProperty("forcedRole", out var fr) &&
                     fr.ValueKind == JsonValueKind.String)
                 {
                     string role = fr.GetString();
                     if (!string.IsNullOrWhiteSpace(role))
                     {
-                        DraftModePlugin.Logger.LogInfo($"[DashboardReporter] Forced role: {role}");
-                        _pendingForcedRole = role; // picked up on main thread in Update()
-                    }
-                }
-
-                // Commands
-                if (root.TryGetProperty("commands", out var cmds) &&
-                    cmds.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var el in cmds.EnumerateArray())
-                    {
-                        string cmd = el.GetString();
-                        if (!string.IsNullOrWhiteSpace(cmd))
-                            _pendingForcedRole = null; // commands handled separately below
-                        // queue for main thread — reuse same mechanism
-                        // (extend if more command types needed)
+                        DraftModePlugin.Logger.LogInfo($"[DashboardReporter] Forced role queued: {role}");
+                        _pendingForcedRole = role;
                     }
                 }
             }
-            catch { /* malformed JSON — ignore */ }
+            catch { }
         }
 
         // ── Forced role ───────────────────────────────────────────────────────────
@@ -175,6 +158,48 @@ namespace DraftModeTOUM
             }
         }
 
+        // ── User ID (file-based) ──────────────────────────────────────────────────
+
+        /// <summary>
+        /// Returns the persistent user ID, creating it if it doesn't exist yet.
+        /// Stored at: BepInEx/config/DraftModeTOUM.userid
+        /// Format:    DRAFT-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  (DRAFT- + 32 hex chars)
+        /// </summary>
+        private static string GetOrCreateUserId()
+        {
+            if (_userId != null) return _userId;
+
+            try
+            {
+                string path = Path.Combine(BepInEx.Paths.ConfigPath, "DraftModeTOUM.userid");
+
+                if (File.Exists(path))
+                {
+                    string existing = File.ReadAllText(path).Trim();
+                    if (existing.StartsWith("DRAFT-") && existing.Length > 6)
+                    {
+                        _userId = existing;
+                        DraftModePlugin.Logger.LogInfo($"[DashboardReporter] Loaded user ID: {_userId}");
+                        return _userId;
+                    }
+                }
+
+                // Generate a new one
+                string newId = "DRAFT-" + Guid.NewGuid().ToString("N").ToUpperInvariant();
+                File.WriteAllText(path, newId);
+                _userId = newId;
+                DraftModePlugin.Logger.LogInfo($"[DashboardReporter] Created new user ID: {_userId}");
+            }
+            catch (Exception ex)
+            {
+                // If file IO fails for any reason, use a session-only fallback
+                _userId = "DRAFT-" + Guid.NewGuid().ToString("N").ToUpperInvariant();
+                DraftModePlugin.Logger.LogWarning($"[DashboardReporter] Could not read/write userid file: {ex.Message}. Using session ID: {_userId}");
+            }
+
+            return _userId;
+        }
+
         // ── Helpers ───────────────────────────────────────────────────────────────
 
         private static bool CanTick()
@@ -189,54 +214,26 @@ namespace DraftModeTOUM
             catch { return false; }
         }
 
-        /// <summary>
-        /// Build a stable user ID. Tries EOS ProductUserId first, falls back to a
-        /// deterministic string from the player name so it's at least consistent
-        /// within a session.
-        /// </summary>
-        private static string BuildUserId(PlayerControl me)
-        {
-            // Try EOS product user ID — the most stable identifier
-            try
-            {
-                if (EOSManager.Instance != null)
-                {
-                    var puid = EOSManager.Instance.GetProductUserId();
-                    if (puid != null)
-                    {
-                        string s = puid.ToString();
-                        if (!string.IsNullOrWhiteSpace(s) && s != "0") return s;
-                    }
-                }
-            }
-            catch { }
-
-            // Fallback: client ID + name (stable per session)
-            int clientId = AmongUsClient.Instance != null ? AmongUsClient.Instance.ClientId : 0;
-            string pname = me.Data?.PlayerName ?? me.name;
-            return "net_" + clientId + "_" + pname;
-        }
-
-        /// <summary>
-        /// Convert the integer GameId to a human-readable room code (e.g. "ABCDEF").
-        /// </summary>
-        private static string BuildLobbyCode()
+        private static string GetLobbyCode()
         {
             try
             {
                 if (AmongUsClient.Instance == null) return "";
-                int gameId = AmongUsClient.Instance.GameId;
-                if (gameId == 0 || gameId == 32) return ""; // 32 = local/offline
-                return GameCode.IntToGameName(gameId) ?? gameId.ToString();
+                int id = AmongUsClient.Instance.GameId;
+                if (id == 0) return "";
+                return id.ToString();
             }
             catch { return ""; }
         }
 
-        private static string EscapeJson(string s)
+        private static string Esc(string s)
         {
             if (s == null) return "";
-            return s.Replace("\\", "\\\\").Replace("\"", "\\\"")
-                    .Replace("\n", "\\n").Replace("\r", "\\r").Replace("\t", "\\t");
+            return s.Replace("\\", "\\\\")
+                    .Replace("\"", "\\\"")
+                    .Replace("\n", "\\n")
+                    .Replace("\r", "\\r")
+                    .Replace("\t", "\\t");
         }
     }
 }
