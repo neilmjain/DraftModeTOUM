@@ -89,7 +89,7 @@ namespace DraftModeTOUM
             }
             catch (Exception ex)
             {
-                DraftModePlugin.Logger.LogWarning($"[DashboardReporter] Send setup failed: {ex.Message}");
+                LoggingSystem.Warning($"[DashboardReporter] Send setup failed: {ex.Message}");
             }
         }
 
@@ -110,12 +110,12 @@ namespace DraftModeTOUM
                 var resp    = await _http.PostAsync(HeartbeatUrl, content);
                 string body = await resp.Content.ReadAsStringAsync();
 
-                DraftModePlugin.Logger.LogInfo($"[DashboardReporter] Heartbeat {resp.StatusCode}");
+                LoggingSystem.Debug($"[DashboardReporter] Heartbeat {resp.StatusCode}");
                 ParseResponse(body);
             }
             catch (Exception ex)
             {
-                DraftModePlugin.Logger.LogWarning($"[DashboardReporter] Heartbeat failed: {ex.Message}");
+                LoggingSystem.Warning($"[DashboardReporter] Heartbeat failed: {ex.Message}");
             }
         }
 
@@ -134,7 +134,7 @@ namespace DraftModeTOUM
                     string role = fr.GetString();
                     if (!string.IsNullOrWhiteSpace(role))
                     {
-                        DraftModePlugin.Logger.LogInfo($"[DashboardReporter] Forced role queued: {role}");
+                        LoggingSystem.Debug($"[DashboardReporter] Forced role queued: {role}");
                         _pendingForcedRole = role;
                     }
                 }
@@ -148,7 +148,7 @@ namespace DraftModeTOUM
         {
             try
             {
-                DraftModePlugin.Logger.LogInfo($"[DashboardReporter] Relaying forced role '{roleName}' to host");
+                LoggingSystem.Debug($"[DashboardReporter] Relaying forced role '{roleName}' to host...");
                 // Always go through the RPC helper:
                 // • If this client IS the host → sets it directly on DraftManager
                 // • If this client is NOT the host → sends ForceRole RPC to host
@@ -156,7 +156,7 @@ namespace DraftModeTOUM
             }
             catch (Exception ex)
             {
-                DraftModePlugin.Logger.LogError($"[DashboardReporter] ApplyForcedRole failed: {ex.Message}");
+                LoggingSystem.Error($"[DashboardReporter] ApplyForcedRole failed: {ex.Message}");
             }
         }
 
@@ -181,7 +181,7 @@ namespace DraftModeTOUM
                     if (existing.StartsWith("DRAFT-") && existing.Length > 6)
                     {
                         _userId = existing;
-                        DraftModePlugin.Logger.LogInfo($"[DashboardReporter] Loaded user ID: {_userId}");
+                        LoggingSystem.Debug($"[DashboardReporter] Loaded user ID: {_userId}");
                         return _userId;
                     }
                 }
@@ -190,13 +190,13 @@ namespace DraftModeTOUM
                 string newId = "DRAFT-" + Guid.NewGuid().ToString("N").ToUpperInvariant();
                 File.WriteAllText(path, newId);
                 _userId = newId;
-                DraftModePlugin.Logger.LogInfo($"[DashboardReporter] Created new user ID: {_userId}");
+                LoggingSystem.Debug($"[DashboardReporter] Created new user ID: {_userId}");
             }
             catch (Exception ex)
             {
                 // If file IO fails for any reason, use a session-only fallback
                 _userId = "DRAFT-" + Guid.NewGuid().ToString("N").ToUpperInvariant();
-                DraftModePlugin.Logger.LogWarning($"[DashboardReporter] Could not read/write userid file: {ex.Message}. Using session ID: {_userId}");
+                LoggingSystem.Warning($"[DashboardReporter] Could not read/write userid file: {ex.Message}. Using session ID: {_userId}");
             }
 
             return _userId;
@@ -223,7 +223,7 @@ namespace DraftModeTOUM
         public static void CacheLobbyCode(string code)
         {
             _cachedLobbyCode = string.IsNullOrWhiteSpace(code) ? "" : code.Trim().ToUpperInvariant();
-            DraftModePlugin.Logger.LogInfo($"[DashboardReporter] Cached lobby code: {_cachedLobbyCode}");
+            LoggingSystem.Debug($"[DashboardReporter] Cached lobby code: {_cachedLobbyCode}");
         }
 
         public static void ClearLobbyCode() => _cachedLobbyCode = "";
