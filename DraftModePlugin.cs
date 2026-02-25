@@ -50,8 +50,8 @@ namespace DraftModeTOUM
             _harmony = new Harmony(PluginInfo.PLUGIN_GUID);
             _harmony.PatchAll();
 
-            // Start the dashboard reporter (heartbeats + forced-role support)
-            DraftDashboardReporter.EnsureExists();
+            // DraftDashboardReporter is started lazily from MainMenuManagerPatch
+            // and re-ensured on lobby join — NOT here, as Unity scene isn't ready during Load().
 
             Logger.LogInfo("DraftModeTOUM loaded successfully!");
         }
@@ -121,6 +121,36 @@ namespace DraftModeTOUM
             DraftScreenController.Hide();
             DraftStatusOverlay.SetState(OverlayState.Hidden);
             DraftRecapOverlay.Hide();
+        }
+    }
+
+    /// <summary>
+    /// Start the reporter as soon as the main menu is alive.
+    /// This is the earliest point where Unity scene/GameObject creation is safe.
+    /// </summary>
+    [HarmonyPatch(typeof(MainMenuManager), nameof(MainMenuManager.Start))]
+    public static class MainMenuManagerStartPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix()
+        {
+            DraftDashboardReporter.EnsureExists();
+            DraftModePlugin.Logger.LogInfo("[DraftModePlugin] DashboardReporter ensured from MainMenu.");
+        }
+    }
+
+    /// <summary>
+    /// Re-ensure the reporter every time we successfully join a server,
+    /// in case it was destroyed during a previous session.
+    /// </summary>
+    [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+    public static class OnGameJoinedPatch
+    {
+        [HarmonyPostfix]
+        public static void Postfix()
+        {
+            DraftDashboardReporter.EnsureExists();
+            DraftModePlugin.Logger.LogInfo("[DraftModePlugin] DashboardReporter ensured on game join.");
         }
     }
 }

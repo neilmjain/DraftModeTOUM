@@ -25,7 +25,7 @@ namespace DraftModeTOUM
         // Loaded once on first heartbeat, then cached
         private static string _userId = null;
 
-        private float  _nextHeartbeat     = 5f;
+        private float  _nextHeartbeat     = 0f; // fire on first tick
         private static string _pendingForcedRole = null;
 
         // ── Singleton ────────────────────────────────────────────────────────────
@@ -141,16 +141,14 @@ namespace DraftModeTOUM
             catch { }
         }
 
-        // ── Forced role ───────────────────────────────────────────────────────────
+        // ── Forced role (pins a card into the player's next draft offer) ──────────
 
         private static void ApplyForcedRole(string roleName)
         {
             try
             {
-                var me = PlayerControl.LocalPlayer;
-                if (me == null) return;
-                DraftModePlugin.Logger.LogInfo($"[DashboardReporter] Applying forced role: {roleName}");
-                RoleAssigner.AssignRole(me, roleName);
+                DraftModePlugin.Logger.LogInfo($"[DashboardReporter] Pinning forced role for next draft: {roleName}");
+                DraftManager.SetForcedDraftRole(roleName);
             }
             catch (Exception ex)
             {
@@ -221,9 +219,52 @@ namespace DraftModeTOUM
                 if (AmongUsClient.Instance == null) return "";
                 int id = AmongUsClient.Instance.GameId;
                 if (id == 0) return "";
-                return id.ToString();
+                // Among Us encodes lobby codes as a signed 32-bit int.
+                // Positive = new-style 6-letter code, negative = old 4-letter code.
+                // Convert to the letter string the same way the game client does.
+                return IntToGameName(id);
             }
             catch { return ""; }
+        }
+
+        /// <summary>
+        /// Replicates Among Us' GameCode.IntToGameName() without needing the class reference.
+        /// New codes (positive): base-26 decode into 6 letters.
+        /// Old codes (negative): base-26 decode into 4 letters.
+        /// </summary>
+        private static string IntToGameName(int id)
+        {
+            try
+            {
+                // Character map used by Among Us
+                const string map = "QWXRTYLPESDFGHUJKZBNMIO CVA";
+                // New-style positive codes: 6 characters
+                if (id >= 0)
+                {
+                    char[] result = new char[6];
+                    for (int i = 5; i >= 0; i--)
+                    {
+                        result[i] = map[id % 26];
+                        id /= 26;
+                    }
+                    return new string(result);
+                }
+                else
+                {
+                    // Old-style negative codes: 4 characters
+                    // Strip the sign and decode low 20 bits
+                    uint u = (uint)id & 0x3FFFFF;
+                    char[] result = new char[4];
+                    for (int i = 3; i >= 0; i--)
+                    {
+                        // Cast the uint modulo result to int for string indexing
+                        result[i] = map[(int)(u % 26)];
+                        u /= 26;
+                    }
+                    return new string(result);
+                }
+            }
+            catch { return id.ToString(); }
         }
 
         private static string Esc(string s)
