@@ -81,6 +81,12 @@ namespace DraftModeTOUM.Managers
             _forcedRoleId       = null;
             _forcedRoleTargetId = targetPlayerId;
             LoggingSystem.Debug($"[DraftManager] Forced draft card set: '{roleName}' for player {targetPlayerId}");
+            
+            // If draft is already active, resolve the role ID immediately
+            if (IsDraftActive)
+            {
+                ResolveForcedRoleId();
+            }
         }
 
         // ---- Public accessors ---------------------------------------------------

@@ -17,6 +17,7 @@ namespace DraftModeTOUM
     public class DraftDashboardReporter : MonoBehaviour
     {
         private const string HeartbeatUrl      = "https://mckelanor.xyz/au/draft/admin/api/heartbeat.php";
+        private const string ConsumeForcedRoleUrl = "https://mckelanor.xyz/au/draft/admin/api/consume-forced-role.php";
         private const float  HeartbeatInterval = 3f;
 
         private static DraftDashboardReporter _instance;
@@ -153,10 +154,28 @@ namespace DraftModeTOUM
                 // • If this client IS the host → sets it directly on DraftManager
                 // • If this client is NOT the host → sends ForceRole RPC to host
                 DraftModeTOUM.Patches.DraftNetworkHelper.SendForceRoleToHost(roleName);
+                
+                // DO NOT consume here - the role stays in queue until the draft actually uses it
+                // It will be consumed by DraftManager when the draft offer is generated
             }
             catch (Exception ex)
             {
                 LoggingSystem.Error($"[DashboardReporter] ApplyForcedRole failed: {ex.Message}");
+            }
+        }
+
+        private static async Task ConsumeForcedRole(string userId)
+        {
+            try
+            {
+                string json = "{\"userId\":\"" + Esc(userId) + "\"}";
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
+                var resp = await _http.PostAsync(ConsumeForcedRoleUrl, content);
+                LoggingSystem.Debug($"[DashboardReporter] Forced role consumed from queue");
+            }
+            catch (Exception ex)
+            {
+                LoggingSystem.Warning($"[DashboardReporter] Failed to consume forced role: {ex.Message}");
             }
         }
 
