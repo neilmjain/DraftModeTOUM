@@ -120,7 +120,7 @@ namespace DraftModeTOUM.Patches
                         string roleName = reader.ReadString();
                         byte targetId   = reader.ReadByte();
                         DraftManager.SetForcedDraftRole(roleName, targetId);
-                        DraftModePlugin.Logger.LogInfo($"[DraftRpcPatch] Host received ForceRole '{roleName}' for player {targetId}");
+                        LoggingSystem.Debug($"[DraftRpcPatch] Host received ForceRole '{roleName}' for player {targetId}");
                     }
                     return false;
 
