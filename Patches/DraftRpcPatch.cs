@@ -15,7 +15,8 @@ namespace DraftModeTOUM.Patches
         SlotNotify   = 225,
         PickerReady    = 226,
         PickConfirmed  = 227,
-        ForceRole      = 228
+        ForceRole      = 228,
+        EndDraft       = 229
     }
 
     [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
@@ -121,6 +122,12 @@ namespace DraftModeTOUM.Patches
                         DraftManager.SetForcedDraftRole(roleName, targetId);
                         DraftModePlugin.Logger.LogInfo($"[DraftRpcPatch] Host received ForceRole '{roleName}' for player {targetId}");
                     }
+                    return false;
+
+                case DraftRpc.EndDraft:
+                    // Host broadcasts draft end to all clients
+                    DraftManager.Reset(cancelledBeforeCompletion: true);
+                    DraftManager.SendChatLocal("<color=#FFD700>Draft has been cancelled by the host.</color>");
                     return false;
 
                 default:
@@ -314,6 +321,20 @@ namespace DraftModeTOUM.Patches
                 writer.Write(entries.Count);
                 foreach (var e in entries) { writer.Write(e.SlotNumber); writer.Write(e.RoleName); }
             }
+            AmongUsClient.Instance.FinishRpcImmediately(writer);
+        }
+
+        public static void BroadcastDraftEnd()
+        {
+            // Host resets locally
+            DraftManager.Reset(cancelledBeforeCompletion: true);
+            DraftManager.SendChatLocal("<color=#FFD700>Draft has been cancelled by the host.</color>");
+
+            // Broadcast to all clients
+            var writer = AmongUsClient.Instance.StartRpcImmediately(
+                PlayerControl.LocalPlayer.NetId,
+                (byte)DraftRpc.EndDraft,
+                Hazel.SendOption.Reliable, -1);
             AmongUsClient.Instance.FinishRpcImmediately(writer);
         }
     }
