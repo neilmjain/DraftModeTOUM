@@ -49,6 +49,7 @@ namespace DraftModeTOUM
 
             _harmony = new Harmony(PluginInfo.PLUGIN_GUID);
             _harmony.PatchAll();
+            PatchLobbyCodeMethod(_harmony);
 
             // DraftDashboardReporter is started lazily from MainMenuManagerPatch
             // and re-ensured on lobby join — NOT here, as Unity scene isn't ready during Load().
@@ -60,6 +61,81 @@ namespace DraftModeTOUM
         {
             _harmony?.UnpatchSelf();
             return base.Unload();
+        }
+
+        /// <summary>
+        /// Scans all loaded assemblies for a static method that converts a lobby code
+        /// string (e.g. "STICKY") to an int, then patches it to capture the code.
+        /// This is necessary because GameCode class name differs across IL2CPP versions.
+        /// </summary>
+        public static void PatchLobbyCodeMethod(Harmony harmony)
+        {
+            try
+            {
+                System.Reflection.MethodInfo target = null;
+                foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    try
+                    {
+                        foreach (var type in asm.GetTypes())
+                        {
+                            try
+                            {
+                                foreach (var method in type.GetMethods(
+                                    System.Reflection.BindingFlags.Static |
+                                    System.Reflection.BindingFlags.Public |
+                                    System.Reflection.BindingFlags.NonPublic))
+                                {
+                                    if ((method.Name.Contains("GameName") || method.Name.Contains("NameToInt") || method.Name.Contains("CodeToInt"))
+                                        && method.GetParameters().Length == 1
+                                        && method.GetParameters()[0].ParameterType == typeof(string))
+                                    {
+                                        Logger.LogInfo($"[LobbyCodePatch] Found candidate: {type.FullName}.{method.Name}");
+                                        target = method;
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                    catch { }
+                }
+
+                if (target != null)
+                {
+                    var prefix = typeof(DraftModePlugin).GetMethod(
+                        nameof(LobbyCodeMethodPrefix),
+                        System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public);
+                    harmony.Patch(target, prefix: new HarmonyMethod(prefix));
+                    Logger.LogInfo($"[LobbyCodePatch] Patched {target.DeclaringType?.Name}.{target.Name}");
+                }
+                else
+                {
+                    Logger.LogWarning("[LobbyCodePatch] No GameNameToInt method found — lobby code capture unavailable.");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Logger.LogWarning($"[LobbyCodePatch] Scan error: {ex.Message}");
+            }
+        }
+
+        public static void LobbyCodeMethodPrefix(string[] __args)
+        {
+            try
+            {
+                // Use __args to capture the first parameter by position rather than by name,
+                // because different Among Us builds name the parameter differently
+                // ("gameCode", "gameId", etc.) which causes HarmonyX to fail.
+                string gameCode = (__args != null && __args.Length > 0) ? __args[0] : null;
+                if (!string.IsNullOrWhiteSpace(gameCode))
+                {
+                    string code = gameCode.Trim().ToUpperInvariant();
+                    DraftDashboardReporter.CacheLobbyCode(code);
+                    Logger.LogInfo($"[LobbyCodePatch] Captured lobby code: {code}");
+                }
+            }
+            catch { }
         }
     }
 
@@ -81,6 +157,7 @@ namespace DraftModeTOUM
             DraftRecapOverlay.Hide();
             bool draftStillInProgress = DraftManager.IsDraftActive;
             DraftManager.Reset(cancelledBeforeCompletion: draftStillInProgress);
+            DraftDashboardReporter.ClearLobbyCode();
             DraftModePlugin.Logger.LogInfo($"[DraftModePlugin] Session cleared on disconnect.");
         }
     }
@@ -147,10 +224,52 @@ namespace DraftModeTOUM
     public static class OnGameJoinedPatch
     {
         [HarmonyPostfix]
-        public static void Postfix()
+        public static void Postfix(AmongUsClient __instance)
         {
             DraftDashboardReporter.EnsureExists();
             DraftModePlugin.Logger.LogInfo("[DraftModePlugin] DashboardReporter ensured on game join.");
+
+            // Fallback: directly read the game code from AmongUsClient so the lobby
+            // code is always captured even if the GameCode.GameNameToIntV2 patch missed it.
+            try
+            {
+                string gameId = __instance.GameId.ToString();
+                if (!string.IsNullOrWhiteSpace(gameId) && gameId != "0")
+                {
+                    // GameId is an int on official servers but modded servers (Impostor)
+                    // also supply a word code via the join URL — try to reconstruct it
+                    // from the raw int using GameCode.IntToGameName if it exists,
+                    // otherwise just use the int as a string so the dashboard shows *something*.
+                    string code = gameId;
+                    try
+                    {
+                        // Use standard .NET reflection on the IL2CPP-proxied type
+                        var gcType = typeof(InnerNet.GameCode);
+                        foreach (var m in gcType.GetMethods(
+                            System.Reflection.BindingFlags.Static |
+                            System.Reflection.BindingFlags.Public |
+                            System.Reflection.BindingFlags.NonPublic))
+                        {
+                            if ((m.Name.Contains("IntToGame") || m.Name.Contains("IntToName") || m.Name.Contains("IntToCode"))
+                                && m.GetParameters().Length == 1)
+                            {
+                                var result = m.Invoke(null, new object[] { __instance.GameId });
+                                string s = result?.ToString();
+                                if (!string.IsNullOrWhiteSpace(s))
+                                {
+                                    code = s;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+
+                    DraftDashboardReporter.CacheLobbyCode(code);
+                    DraftModePlugin.Logger.LogInfo($"[DraftModePlugin] Fallback lobby code from GameId: {code}");
+                }
+            }
+            catch { }
         }
     }
 }
