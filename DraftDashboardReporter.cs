@@ -27,6 +27,7 @@ namespace DraftModeTOUM
 
         private float  _nextHeartbeat     = 0f; // fire on first tick
         private static string _pendingForcedRole = null;
+        private static string _cachedLobbyCode   = "";
 
         // ── Singleton ────────────────────────────────────────────────────────────
 
@@ -215,60 +216,19 @@ namespace DraftModeTOUM
             catch { return false; }
         }
 
-        private static string GetLobbyCode()
+        /// <summary>
+        /// Called from OnGameJoinedPatch to capture the lobby code string
+        /// exactly as the server assigned it (word codes like "ANKLET").
+        /// </summary>
+        public static void CacheLobbyCode(string code)
         {
-            try
-            {
-                if (AmongUsClient.Instance == null) return "";
-                int id = AmongUsClient.Instance.GameId;
-                if (id == 0) return "";
-                // Among Us encodes lobby codes as a signed 32-bit int.
-                // Positive = new-style 6-letter code, negative = old 4-letter code.
-                // Convert to the letter string the same way the game client does.
-                return IntToGameName(id);
-            }
-            catch { return ""; }
+            _cachedLobbyCode = string.IsNullOrWhiteSpace(code) ? "" : code.Trim().ToUpperInvariant();
+            DraftModePlugin.Logger.LogInfo($"[DashboardReporter] Cached lobby code: {_cachedLobbyCode}");
         }
 
-        /// <summary>
-        /// Replicates Among Us' GameCode.IntToGameName() without needing the class reference.
-        /// New codes (positive): base-26 decode into 6 letters.
-        /// Old codes (negative): base-26 decode into 4 letters.
-        /// </summary>
-        private static string IntToGameName(int id)
-        {
-            try
-            {
-                // Character map used by Among Us
-                const string map = "QWXRTYLPESDFGHUJKZBNMIO CVA";
-                // New-style positive codes: 6 characters
-                if (id >= 0)
-                {
-                    char[] result = new char[6];
-                    for (int i = 5; i >= 0; i--)
-                    {
-                        result[i] = map[id % 26];
-                        id /= 26;
-                    }
-                    return new string(result);
-                }
-                else
-                {
-                    // Old-style negative codes: 4 characters
-                    // Strip the sign and decode low 20 bits
-                    uint u = (uint)id & 0x3FFFFF;
-                    char[] result = new char[4];
-                    for (int i = 3; i >= 0; i--)
-                    {
-                        // Cast the uint modulo result to int for string indexing
-                        result[i] = map[(int)(u % 26)];
-                        u /= 26;
-                    }
-                    return new string(result);
-                }
-            }
-            catch { return id.ToString(); }
-        }
+        public static void ClearLobbyCode() => _cachedLobbyCode = "";
+
+        private static string GetLobbyCode() => _cachedLobbyCode;
 
         private static string Esc(string s)
         {
