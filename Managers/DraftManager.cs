@@ -374,7 +374,7 @@ namespace DraftModeTOUM.Managers
 
                     // Give crewmate-bucket players a chance at other factions too
                     // (one "wildcard" non-crew card if available and caps permit)
-                    if (state.GuaranteedFaction == null && otherFill.Count > 0 && remaining >= 2)
+                    if (!state.GuaranteedFaction.HasValue && otherFill.Count > 0 && remaining >= 2)
                     {
                         offered.AddRange(PickWeightedUnique(otherFill, 1));
                         remaining--;

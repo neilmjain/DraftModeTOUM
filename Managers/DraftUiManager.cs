@@ -1,91 +1,89 @@
-using MiraAPI.Roles;
 using System.Collections.Generic;
-using System.Linq;
+using AmongUs.GameOptions;
+using UnityEngine;
 
 namespace DraftModeTOUM.Managers
 {
-    public enum RoleFaction
+    /// <summary>
+    /// Manages the lifetime of every draft-related UI panel so they can all
+    /// be closed in one call (e.g. on disconnect or game-start).
+    /// Also exposes helpers used by DraftRpcPatch and DraftSelectionMinigame.
+    /// </summary>
+    public static class DraftUiManager
     {
-        Crewmate,
-        Impostor,
-        Neutral,
-        NeutralKilling
-    }
+        private static readonly List<GameObject> _tracked = new();
 
-    public static class RoleCategory
-    {
-        private static readonly HashSet<string> NeutralKillingRoles =
-            new(System.StringComparer.OrdinalIgnoreCase)
-            {
-                "Arsonist", "Glitch", "Juggernaut", "Plaguebearer",
-                "Pestilence", "SoulCollector", "Vampire", "Werewolf"
-            };
-
-        private static readonly HashSet<string> NeutralOtherRoles =
-            new(System.StringComparer.OrdinalIgnoreCase)
-            {
-                "Amnesiac", "Fairy", "Mercenary", "Survivor",
-                "Doomsayer", "Executioner", "Jester", "Spectre",
-                "Chef", "Inquisitor"
-            };
-
-        /// <summary>
-        /// Resolve faction from a live RoleBehaviour.
-        /// IsImpostor is a property on RoleBehaviour.
-        /// Neutral detection goes through ICustomRole.Team since RoleBehaviour
-        /// has no IsNeutral member — this matches how TraitorSelectionMinigame does it.
-        /// </summary>
-        public static RoleFaction GetFactionFromRole(RoleBehaviour role)
+        /// <summary>Register a UI root so CloseAll() can reach it.</summary>
+        public static void Track(GameObject go)
         {
-            if (role == null) return RoleFaction.Crewmate;
-
-            // IsImpostor is a bool property on RoleBehaviour
-            if (role.IsImpostor) return RoleFaction.Impostor;
-
-            // Neutral team check via ICustomRole.Team (same approach as TOU source)
-            if (role is ICustomRole customRole &&
-                customRole.Team != ModdedRoleTeams.Crewmate &&
-                customRole.Team != ModdedRoleTeams.Impostor)
-            {
-                // Distinguish neutral killing vs neutral passive by NiceName
-                string normalized = Normalize(role.NiceName);
-                if (NeutralKillingRoles.Contains(normalized)) return RoleFaction.NeutralKilling;
-                return RoleFaction.Neutral;
-            }
-
-            return RoleFaction.Crewmate;
+            if (go != null && !_tracked.Contains(go))
+                _tracked.Add(go);
         }
 
-        /// <summary>
-        /// String-based fallback — used only when a live RoleBehaviour isn't available.
-        /// </summary>
-        public static RoleFaction GetFaction(string roleName)
+        /// <summary>Hide and untrack every registered UI panel.</summary>
+        public static void CloseAll()
         {
-            string normalized = Normalize(roleName);
-            if (NeutralKillingRoles.Contains(normalized)) return RoleFaction.NeutralKilling;
-            if (NeutralOtherRoles.Contains(normalized))   return RoleFaction.Neutral;
-
-            // Try to resolve via RoleManager
-            if (RoleManager.Instance != null)
+            foreach (var go in _tracked)
             {
-                foreach (var r in RoleManager.Instance.AllRoles.ToArray())
-                {
-                    if (r == null) continue;
-                    if (Normalize(r.NiceName) != normalized) continue;
-                    return GetFactionFromRole(r);
-                }
+                if (go != null)
+                    go.SetActive(false);
             }
+            _tracked.Clear();
 
-            return RoleFaction.Crewmate;
+            // Also close the picker screen if one is open
+            DraftScreenController.Hide();
         }
 
-        public static bool IsNeutralKilling(string roleName) =>
-            NeutralKillingRoles.Contains(Normalize(roleName));
+        // ── Picker ────────────────────────────────────────────────────────────────
 
-        public static bool IsNeutral(string roleName) =>
-            NeutralOtherRoles.Contains(Normalize(roleName));
+        /// <summary>
+        /// Open the role-picker screen showing the given offered role IDs.
+        /// Called when this client is the current picker.
+        /// </summary>
+        public static void ShowPicker(List<ushort> roleIds)
+        {
+            DraftScreenController.Show(roleIds.ToArray());
+        }
 
-        private static string Normalize(string s) =>
+        // ── Turn list ─────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Refresh the status overlay's turn-order display after the draft state changes.
+        /// </summary>
+        public static void RefreshTurnList()
+        {
+            DraftStatusOverlay.Refresh();
+        }
+
+        // ── Card building ─────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Convert a list of role IDs into <see cref="DraftRoleCard"/> objects ready
+        /// for the selection screen to instantiate.
+        /// </summary>
+        public static List<DraftRoleCard> BuildCards(List<ushort> roleIds)
+        {
+            var cards = new List<DraftRoleCard>();
+            int index = 0;
+            foreach (var id in roleIds)
+            {
+                var role = RoleManager.Instance?.GetRole((RoleTypes)id);
+                string roleName = role?.NiceName ?? id.ToString();
+                string teamName = RoleCategory.GetFactionFromRole(role).ToString();
+                Sprite? icon    = null; // caller falls back to TouRoleIcons.RandomAny
+                Color color     = RoleColors.GetColor(roleName);
+                cards.Add(new DraftRoleCard(roleName, teamName, icon, color, index));
+                index++;
+            }
+            return cards;
+        }
+
+        // ── Utility ───────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Normalise a role/team name string for case-insensitive, space-insensitive matching.
+        /// </summary>
+        public static string Normalize(string s) =>
             (s ?? string.Empty).Replace(" ", "").Replace("-", "");
     }
 }

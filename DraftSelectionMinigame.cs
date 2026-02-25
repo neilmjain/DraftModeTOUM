@@ -1,8 +1,9 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
 using DraftModeTOUM.Managers;
 using DraftModeTOUM.Patches;
 using Reactor.Utilities;
-using System.Collections;
-using System.Collections.Generic;
 using TMPro;
 using TownOfUs.Assets;
 using TownOfUs.Utilities;
@@ -146,7 +147,7 @@ namespace DraftModeTOUM
                     _statusText.font         = HudManager.Instance.TaskPanel.taskText.font;
                     _statusText.fontMaterial = HudManager.Instance.TaskPanel.taskText.fontMaterial;
                     _statusText.text         = "<color=#FFFFFF><b>Pick Your Role!</b></color>";
-                    _statusText.gameObject.SetActive(true);
+                    statusGo.gameObject.SetActive(true);
                 }
             }
 
@@ -309,19 +310,21 @@ namespace DraftModeTOUM
         private static IEnumerator CoAnimateCards(Transform rolesHolder, float cardScale, bool useGrid, int totalCards)
         {
             if (rolesHolder == null) yield break;
-            int currentCard = 0;
             int cols = Mathf.CeilToInt(totalCards / 2f);
-            foreach (var o in rolesHolder)
+            // Use index loop — IL2CPP Transform enumerator crashes if children are
+            // destroyed during iteration, and the cast path is also unstable.
+            for (int i = 0; i < rolesHolder.childCount; i++)
             {
-                var card = o.Cast<Transform>();
+                Transform card = rolesHolder.GetChild(i);
                 if (card == null) continue;
-                var child = card.GetChild(0);
-                // Use column index for tilt in grid mode so rows have matching tilt range
-                int animIndex = useGrid ? (currentCard % cols) : currentCard;
+                if (card.childCount == 0) continue;
+                Transform child = card.GetChild(0);
+                if (child == null) continue;
+                int animIndex = useGrid ? (i % cols) : i;
                 yield return CoAnimateCardIn(child, animIndex);
-                Coroutines.Start(MiscUtils.BetterBloop(child, finalSize: cardScale, duration: 0.22f, intensity: 0.16f));
+                try { Coroutines.Start(MiscUtils.BetterBloop(child, finalSize: cardScale, duration: 0.22f, intensity: 0.16f)); }
+                catch (Exception bex) { DraftModePlugin.Logger.LogWarning($"[DraftScreen] BetterBloop failed: {bex.Message}"); }
                 yield return new WaitForSeconds(0.08f);
-                currentCard++;
             }
             // Signal that all cards are shown — start the timer now
             if (Instance != null) Instance._cardsReady = true;
