@@ -138,8 +138,24 @@ namespace DraftModeTOUM.Managers
             if (AmongUsClient.Instance.GameState != InnerNet.InnerNetClient.GameStates.Joined) return;
 
             DraftTicker.EnsureExists();
+
+            // Preserve any pending forced role across Reset()
+            string  savedForcedName   = _forcedRoleName;
+            byte    savedForcedTarget = _forcedRoleTargetId;
+
             Reset(cancelledBeforeCompletion: true);
             ApplyLocalSettings();
+
+            // Restore the forced role if one was pending
+            if (!string.IsNullOrWhiteSpace(savedForcedName) && savedForcedTarget != 255)
+            {
+                _forcedRoleName     = savedForcedName;
+                _forcedRoleTargetId = savedForcedTarget;
+                _forcedRoleId       = null; // will be resolved after pool is built
+                DraftModePlugin.Logger.LogInfo(
+                    $"[DraftManager] Restored pending forced role '{savedForcedName}' " +
+                    $"for player {savedForcedTarget} after Reset");
+            }
 
             var players = PlayerControl.AllPlayerControls.ToArray()
                 .Where(p => p != null && !p.Data.Disconnected).ToList();
@@ -189,29 +205,40 @@ namespace DraftModeTOUM.Managers
             if (string.IsNullOrWhiteSpace(_forcedRoleName)) return;
             _forcedRoleId = null;
 
+            DraftModePlugin.Logger.LogInfo(
+                $"[DraftManager] Resolving forced role '{_forcedRoleName}' " +
+                $"for player {_forcedRoleTargetId} (pool has {_pool.RoleIds.Count} roles)");
+
+            // Search pool first
             foreach (var id in _pool.RoleIds)
             {
                 var role = RoleManager.Instance?.GetRole((RoleTypes)id);
-                if (role != null && string.Equals(role.NiceName, _forcedRoleName, StringComparison.OrdinalIgnoreCase))
+                if (role == null) continue;
+                DraftModePlugin.Logger.LogInfo($"[DraftManager]   pool role: '{role.NiceName}' (id={id})");
+                if (string.Equals(role.NiceName, _forcedRoleName, StringComparison.OrdinalIgnoreCase))
                 {
                     _forcedRoleId = id;
-                    DraftModePlugin.Logger.LogInfo($"[DraftManager] Forced role resolved: {_forcedRoleName} -> {id}");
+                    DraftModePlugin.Logger.LogInfo(
+                        $"[DraftManager] Forced role resolved in pool: '{_forcedRoleName}' -> {id}");
                     return;
                 }
             }
 
+            // Fall back to all registered roles (bypasses pool — still force-assigns it)
             foreach (RoleTypes rt in System.Enum.GetValues(typeof(RoleTypes)))
             {
                 var role = RoleManager.Instance?.GetRole(rt);
                 if (role != null && string.Equals(role.NiceName, _forcedRoleName, StringComparison.OrdinalIgnoreCase))
                 {
                     _forcedRoleId = (ushort)rt;
-                    DraftModePlugin.Logger.LogInfo($"[DraftManager] Forced role resolved (outside pool): {_forcedRoleName} -> {rt}");
+                    DraftModePlugin.Logger.LogInfo(
+                        $"[DraftManager] Forced role resolved (outside pool): '{_forcedRoleName}' -> {rt}");
                     return;
                 }
             }
 
-            DraftModePlugin.Logger.LogWarning($"[DraftManager] Could not resolve forced role name: {_forcedRoleName}");
+            DraftModePlugin.Logger.LogWarning(
+                $"[DraftManager] Could not resolve forced role name: '{_forcedRoleName}'");
         }
 
         // ---- Bucket pre-planning ------------------------------------------------
@@ -342,6 +369,10 @@ namespace DraftModeTOUM.Managers
 
             // ---- Forced card injection ------------------------------------------
             // If admin pinned a role for this slot's player, inject it and auto-pick.
+            DraftModePlugin.Logger.LogInfo(
+                $"[DraftManager] OfferRoles: slot={state.SlotNumber} pid={state.PlayerId} " +
+                $"| forcedRoleId={_forcedRoleId?.ToString() ?? "null"} " +
+                $"forcedTarget={_forcedRoleTargetId} forcedName='{_forcedRoleName}'");
             if (_forcedRoleId.HasValue && state.PlayerId == _forcedRoleTargetId)
             {
                 ushort forcedId   = _forcedRoleId.Value;
