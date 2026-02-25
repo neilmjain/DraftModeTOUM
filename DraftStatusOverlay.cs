@@ -122,7 +122,7 @@ namespace DraftModeTOUM
             tmp.enableWordWrapping = false;
             tmp.text = text;
 
-            var r = tmp.GetComponent<Renderer>();
+            var r = go.GetComponent<Renderer>();
             if (r != null) { r.sortingLayerName = "UI"; r.sortingOrder = 50; }
 
             return tmp;

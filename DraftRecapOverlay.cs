@@ -129,7 +129,7 @@ namespace DraftModeTOUM
             tmp.alignment = TextAlignmentOptions.Center;
             tmp.enableWordWrapping = false;
 
-            var r = tmp.GetComponent<Renderer>();
+            var r = go.GetComponent<Renderer>();
             if (r != null)
             {
                 r.sortingLayerName = "UI";
