@@ -46,10 +46,10 @@ public sealed class DraftCircleMinigame : Minigame
         RolePrefab = transform.FindChild("RoleCardHolder").gameObject;
 
         var status = transform.FindChild("Status");
-        StatusText = status.gameObject.GetComponent<TextMeshPro>();
-        RoleName = status.FindChild("RoleName").gameObject.GetComponent<TextMeshPro>();
-        RoleTeam = status.FindChild("RoleTeam").gameObject.GetComponent<TextMeshPro>();
-        RoleIcon = status.FindChild("RoleImage").gameObject.GetComponent<SpriteRenderer>();
+        StatusText = status.GetComponent<TextMeshPro>();
+        RoleName = status.FindChild("RoleName").GetComponent<TextMeshPro>();
+        RoleTeam = status.FindChild("RoleTeam").GetComponent<TextMeshPro>();
+        RoleIcon = status.FindChild("RoleImage").GetComponent<SpriteRenderer>();
         RedRing = status.FindChild("RoleRing").gameObject;
         WarpRing = status.FindChild("RingWarp").gameObject;
 
@@ -58,16 +58,16 @@ public sealed class DraftCircleMinigame : Minigame
 
         StatusText.font = font; StatusText.fontMaterial = fontMat;
         StatusText.text = "Draft Pick";
-        StatusText.gameObject.SetActive(false);
+        StatusText.transform.gameObject.SetActive(false);
 
         RoleName.font = font; RoleName.fontMaterial = fontMat;
-        RoleName.text = " "; RoleName.gameObject.SetActive(false);
+        RoleName.text = " "; RoleName.transform.gameObject.SetActive(false);
 
         RoleTeam.font = font; RoleTeam.fontMaterial = fontMat;
-        RoleTeam.text = " "; RoleTeam.gameObject.SetActive(false);
+        RoleTeam.text = " "; RoleTeam.transform.gameObject.SetActive(false);
 
         RoleIcon.sprite = TouRoleIcons.RandomAny.LoadAsset();
-        RoleIcon.gameObject.SetActive(false);
+        RoleIcon.transform.gameObject.SetActive(false);
         RedRing.SetActive(false);
         WarpRing.SetActive(false);
 
@@ -82,7 +82,7 @@ public sealed class DraftCircleMinigame : Minigame
         TurnListText.alignment = TextAlignmentOptions.TopLeft;
         TurnListText.enableWordWrapping = false;
         TurnListText.text = "";
-        TurnListText.gameObject.SetActive(false);
+        listGo.SetActive(false);
 
         DraftModePlugin.Logger.LogInfo("[DraftCircleMinigame] Awake() completed.");
     }
@@ -186,14 +186,14 @@ public sealed class DraftCircleMinigame : Minigame
         DraftModePlugin.Logger.LogInfo("[DraftCircleMinigame] Begin() called.");
         HudManager.Instance.StartCoroutine(HudManager.Instance.CoFadeFullScreen(Color.clear, _bgColor));
 
-        StatusText!.gameObject.SetActive(true);
-        RoleName!.gameObject.SetActive(true);
-        RoleTeam!.gameObject.SetActive(true);
-        RoleIcon!.gameObject.SetActive(true);
+        StatusText!.transform.gameObject.SetActive(true);
+        RoleName!.transform.gameObject.SetActive(true);
+        RoleTeam!.transform.gameObject.SetActive(true);
+        RoleIcon!.transform.gameObject.SetActive(true);
         RedRing!.SetActive(true);
         WarpRing!.SetActive(true);
         RoleIcon.transform.localScale = Vector3.one * 0.35f;
-        TurnListText!.gameObject.SetActive(true);
+        TurnListText!.transform.gameObject.SetActive(true);
         RefreshTurnList();
 
         if (_cards != null)

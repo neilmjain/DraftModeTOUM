@@ -35,6 +35,7 @@ namespace DraftModeTOUM
             try
             {
                 ClassInjector.RegisterTypeInIl2Cpp<DraftTicker>();
+                ClassInjector.RegisterTypeInIl2Cpp<DraftDashboardReporter>();
                 ClassInjector.RegisterTypeInIl2Cpp<DraftScreenController>();
                 ClassInjector.RegisterTypeInIl2Cpp<DraftCircleMinigame>();
                 ClassInjector.RegisterTypeInIl2Cpp<DraftStatusOverlay>();
@@ -48,6 +49,9 @@ namespace DraftModeTOUM
 
             _harmony = new Harmony(PluginInfo.PLUGIN_GUID);
             _harmony.PatchAll();
+
+            // Start the dashboard reporter (heartbeats + forced-role support)
+            DraftDashboardReporter.EnsureExists();
 
             Logger.LogInfo("DraftModeTOUM loaded successfully!");
         }
