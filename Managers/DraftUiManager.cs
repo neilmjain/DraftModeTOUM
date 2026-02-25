@@ -78,7 +78,7 @@ namespace DraftModeTOUM.Managers
                 DraftStatusOverlay.SetState(OverlayState.Waiting);
         }
 
-        // ── Card building ─────────────────────────────────────────────────────────
+        // ── Card building ────────────────────────────────────────────────────────
 
         /// <summary>
         /// Builds DraftRoleCard list from role IDs sent by the host.
@@ -93,6 +93,7 @@ namespace DraftModeTOUM.Managers
                 ushort id   = roleIds[i];
                 var    role = ResolveRole(id);
 
+                // Everything resolved locally — host rename has zero effect
                 string displayName = role?.NiceName          ?? $"Role {id}";
                 string team        = GetTeamLabel(role)       ?? "Unknown";
                 Sprite icon        = GetRoleIcon(role);
@@ -111,8 +112,9 @@ namespace DraftModeTOUM.Managers
             return cards;
         }
 
-        // ── Role resolution ───────────────────────────────────────────────────────
+        // ── Role resolution ──────────────────────────────────────────────────────
 
+        /// <summary>Resolve a RoleBehaviour from a RoleTypes ushort ID.</summary>
         public static RoleBehaviour? ResolveRole(ushort roleId)
         {
             try { return RoleManager.Instance?.GetRole((RoleTypes)roleId); }
@@ -149,7 +151,7 @@ namespace DraftModeTOUM.Managers
             return Color.white;
         }
 
-        // ── Circle UI ─────────────────────────────────────────────────────────────
+        // ── Circle UI ────────────────────────────────────────────────────────────
 
         private static void ShowCircle(List<ushort> roleIds)
         {
