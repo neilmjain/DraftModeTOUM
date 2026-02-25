@@ -14,7 +14,8 @@ namespace DraftModeTOUM.Patches
         Recap        = 224,
         SlotNotify   = 225,
         PickerReady    = 226,
-        PickConfirmed  = 227
+        PickConfirmed  = 227,
+        ForceRole      = 228
     }
 
     [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
@@ -109,6 +110,17 @@ namespace DraftModeTOUM.Patches
                     // Client signals their animation is done — host starts the turn timer
                     if (AmongUsClient.Instance.AmHost)
                         DraftManager.StartTurnTimer();
+                    return false;
+
+                case DraftRpc.ForceRole:
+                    // Non-host client relays their forced role to the host
+                    if (AmongUsClient.Instance.AmHost)
+                    {
+                        string roleName = reader.ReadString();
+                        byte targetId   = reader.ReadByte();
+                        DraftManager.SetForcedDraftRole(roleName, targetId);
+                        DraftModePlugin.Logger.LogInfo($"[DraftRpcPatch] Host received ForceRole '{roleName}' for player {targetId}");
+                    }
                     return false;
 
                 default:
@@ -260,6 +272,31 @@ namespace DraftModeTOUM.Patches
                     (byte)DraftRpc.PickerReady,
                     Hazel.SendOption.Reliable,
                     AmongUsClient.Instance.HostId);
+                AmongUsClient.Instance.FinishRpcImmediately(writer);
+            }
+        }
+
+        /// <summary>
+        /// Called by a non-host client when their heartbeat returns a forcedRole.
+        /// Sends the role name + their own player ID to the host so the host can inject it.
+        /// If we ARE the host, just call DraftManager directly.
+        /// </summary>
+        public static void SendForceRoleToHost(string roleName)
+        {
+            byte myId = PlayerControl.LocalPlayer.PlayerId;
+            if (AmongUsClient.Instance.AmHost)
+            {
+                DraftManager.SetForcedDraftRole(roleName, myId);
+            }
+            else
+            {
+                var writer = AmongUsClient.Instance.StartRpcImmediately(
+                    PlayerControl.LocalPlayer.NetId,
+                    (byte)DraftRpc.ForceRole,
+                    Hazel.SendOption.Reliable,
+                    AmongUsClient.Instance.HostId);
+                writer.Write(roleName);
+                writer.Write(myId);
                 AmongUsClient.Instance.FinishRpcImmediately(writer);
             }
         }

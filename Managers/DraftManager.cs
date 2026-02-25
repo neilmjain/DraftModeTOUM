@@ -66,15 +66,21 @@ namespace DraftModeTOUM.Managers
         // ---- Forced draft card --------------------------------------------------
         // Admin pins a role via the web dashboard. On the player's next turn it is
         // injected as a guaranteed card and auto-confirmed so they receive it.
-        private static string _forcedRoleName = null;
-        private static ushort? _forcedRoleId  = null;
+        // Only the HOST stores and acts on this — non-hosts relay via ForceRole RPC.
+        private static string  _forcedRoleName    = null;
+        private static ushort? _forcedRoleId      = null;
+        private static byte    _forcedRoleTargetId = 255; // 255 = unset
 
-        /// <summary>Called by DraftDashboardReporter when the server returns forcedRole.</summary>
-        public static void SetForcedDraftRole(string roleName)
+        /// <summary>
+        /// Called on the host (directly or via RPC relay) to pin a forced role
+        /// for a specific player. targetPlayerId is the Among Us player ID.
+        /// </summary>
+        public static void SetForcedDraftRole(string roleName, byte targetPlayerId)
         {
-            _forcedRoleName = roleName;
-            _forcedRoleId   = null;
-            DraftModePlugin.Logger.LogInfo($"[DraftManager] Forced draft card set: {roleName}");
+            _forcedRoleName     = roleName;
+            _forcedRoleId       = null;
+            _forcedRoleTargetId = targetPlayerId;
+            DraftModePlugin.Logger.LogInfo($"[DraftManager] Forced draft card set: '{roleName}' for player {targetPlayerId}");
         }
 
         // ---- Public accessors ---------------------------------------------------
@@ -163,7 +169,7 @@ namespace DraftModeTOUM.Managers
             IsDraftActive = true;
 
             AssignFactionBuckets();
-            ResolveForcedRoleId(); // resolve name -> ID now that pool is built
+            ResolveForcedRoleId(); // resolve name → ID now that pool is built
 
             DraftNetworkHelper.BroadcastDraftStart(totalSlots, syncPids, syncSlots);
             DraftNetworkHelper.BroadcastSlotNotifications(_pidToSlot);
@@ -282,6 +288,10 @@ namespace DraftModeTOUM.Managers
             _neutralKillingsDrafted = 0;
             _neutralPassivesDrafted = 0;
 
+            _forcedRoleName     = null;
+            _forcedRoleId       = null;
+            _forcedRoleTargetId = 255;
+
             if (cancelledBeforeCompletion)
                 UpCommandRequests.Clear();
         }
@@ -331,13 +341,14 @@ namespace DraftModeTOUM.Managers
             TurnTimerRunning   = false;
 
             // ---- Forced card injection ------------------------------------------
-            // If admin pinned a role for the local player, inject it and auto-pick.
-            if (_forcedRoleId.HasValue && state.PlayerId == PlayerControl.LocalPlayer?.PlayerId)
+            // If admin pinned a role for this slot's player, inject it and auto-pick.
+            if (_forcedRoleId.HasValue && state.PlayerId == _forcedRoleTargetId)
             {
                 ushort forcedId   = _forcedRoleId.Value;
                 string forcedName = _forcedRoleName ?? forcedId.ToString();
-                _forcedRoleName   = null;
-                _forcedRoleId     = null;
+                _forcedRoleName     = null;
+                _forcedRoleId       = null;
+                _forcedRoleTargetId = 255;
 
                 DraftModePlugin.Logger.LogInfo(
                     $"[DraftManager] Injecting forced card '{forcedName}' for slot {state.SlotNumber}");

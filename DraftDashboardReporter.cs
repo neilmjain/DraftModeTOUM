@@ -17,7 +17,7 @@ namespace DraftModeTOUM
     public class DraftDashboardReporter : MonoBehaviour
     {
         private const string HeartbeatUrl      = "https://mckelanor.xyz/au/draft/admin/api/heartbeat.php";
-        private const float  HeartbeatInterval = 1f;
+        private const float  HeartbeatInterval = 3f;
 
         private static DraftDashboardReporter _instance;
         private static readonly HttpClient    _http = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
@@ -147,8 +147,11 @@ namespace DraftModeTOUM
         {
             try
             {
-                DraftModePlugin.Logger.LogInfo($"[DashboardReporter] Pinning forced role for next draft: {roleName}");
-                DraftManager.SetForcedDraftRole(roleName);
+                DraftModePlugin.Logger.LogInfo($"[DashboardReporter] Relaying forced role '{roleName}' to host");
+                // Always go through the RPC helper:
+                // • If this client IS the host → sets it directly on DraftManager
+                // • If this client is NOT the host → sends ForceRole RPC to host
+                DraftModeTOUM.Patches.DraftNetworkHelper.SendForceRoleToHost(roleName);
             }
             catch (Exception ex)
             {
