@@ -17,7 +17,7 @@ namespace DraftModeTOUM
     public class DraftDashboardReporter : MonoBehaviour
     {
         private const string HeartbeatUrl      = "https://mckelanor.xyz/au/draft/admin/api/heartbeat.php";
-        private const float  HeartbeatInterval = 10f;
+        private const float  HeartbeatInterval = 1f;
 
         private static DraftDashboardReporter _instance;
         private static readonly HttpClient    _http = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
