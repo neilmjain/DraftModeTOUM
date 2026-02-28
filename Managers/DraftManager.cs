@@ -78,7 +78,13 @@ namespace DraftModeTOUM.Managers
             _forcedRoleName     = roleName;
             _forcedRoleId       = null;
             _forcedRoleTargetId = targetPlayerId;
-            DraftModePlugin.Logger.LogInfo($"[DraftManager] Forced draft card set: '{roleName}' for player {targetPlayerId}");
+            LoggingSystem.Debug($"[DraftManager] Forced draft card set: '{roleName}' for player {targetPlayerId}");
+            
+            // If draft is already active, resolve the role ID immediately
+            if (IsDraftActive)
+            {
+                ResolveForcedRoleId();
+            }
         }
 
         // ---- Public accessors ---------------------------------------------------
@@ -154,6 +160,8 @@ namespace DraftModeTOUM.Managers
                 _forcedRoleTargetId = savedForcedTarget;
                 _forcedRoleId       = null;
                 DraftModePlugin.Logger.LogInfo(
+                _forcedRoleId       = null; // will be resolved after pool is built
+                LoggingSystem.Debug(
                     $"[DraftManager] Restored pending forced role '{savedForcedName}' " +
                     $"for player {savedForcedTarget} after Reset");
             }
@@ -202,7 +210,7 @@ namespace DraftModeTOUM.Managers
             if (string.IsNullOrWhiteSpace(_forcedRoleName)) return;
             _forcedRoleId = null;
 
-            DraftModePlugin.Logger.LogInfo(
+            LoggingSystem.Debug(
                 $"[DraftManager] Resolving forced role '{_forcedRoleName}' " +
                 $"for player {_forcedRoleTargetId} (pool has {_pool.RoleIds.Count} roles)");
 
@@ -210,10 +218,11 @@ namespace DraftModeTOUM.Managers
             {
                 var role = RoleManager.Instance?.GetRole((RoleTypes)id);
                 if (role == null) continue;
+                LoggingSystem.Debug($"[DraftManager]   pool role: '{role.NiceName}' (id={id})");
                 if (string.Equals(role.NiceName, _forcedRoleName, StringComparison.OrdinalIgnoreCase))
                 {
                     _forcedRoleId = id;
-                    DraftModePlugin.Logger.LogInfo(
+                    LoggingSystem.Debug(
                         $"[DraftManager] Forced role resolved in pool: '{_forcedRoleName}' -> {id}");
                     return;
                 }
@@ -225,13 +234,13 @@ namespace DraftModeTOUM.Managers
                 if (role != null && string.Equals(role.NiceName, _forcedRoleName, StringComparison.OrdinalIgnoreCase))
                 {
                     _forcedRoleId = (ushort)rt;
-                    DraftModePlugin.Logger.LogInfo(
+                    LoggingSystem.Debug(
                         $"[DraftManager] Forced role resolved (outside pool): '{_forcedRoleName}' -> {rt}");
                     return;
                 }
             }
 
-            DraftModePlugin.Logger.LogWarning(
+            LoggingSystem.Warning(
                 $"[DraftManager] Could not resolve forced role name: '{_forcedRoleName}'");
         }
 
@@ -331,7 +340,7 @@ namespace DraftModeTOUM.Managers
                 }
             }
 
-            DraftModePlugin.Logger.LogInfo(
+            LoggingSystem.Debug(
                 $"[DraftManager] Buckets assigned: {impSlots} Imp, {nkSlots} NK, " +
                 $"{npSlots} NP, {playerCount - impSlots - nkSlots - npSlots} Crew");
         }
@@ -438,6 +447,9 @@ namespace DraftModeTOUM.Managers
             TurnTimerRunning   = false;
 
             DraftModePlugin.Logger.LogInfo(
+            // ---- Forced card injection ------------------------------------------
+            // If admin pinned a role for this slot's player, inject it and auto-pick.
+            LoggingSystem.Debug(
                 $"[DraftManager] OfferRoles: slot={state.SlotNumber} pid={state.PlayerId} " +
                 $"| forcedRoleId={_forcedRoleId?.ToString() ?? "null"} " +
                 $"forcedTarget={_forcedRoleTargetId} forcedName='{_forcedRoleName}'");
@@ -450,7 +462,7 @@ namespace DraftModeTOUM.Managers
                 _forcedRoleId       = null;
                 _forcedRoleTargetId = 255;
 
-                DraftModePlugin.Logger.LogInfo(
+                LoggingSystem.Debug(
                     $"[DraftManager] Injecting forced card '{forcedName}' for slot {state.SlotNumber}");
 
                 var available2 = GetAvailableIds();
@@ -480,9 +492,15 @@ namespace DraftModeTOUM.Managers
                 if (bucketPool.Count > 0)
                 {
                     offered.AddRange(PickWeightedUnique(bucketPool, 1));
-                    DraftModePlugin.Logger.LogInfo(
+                    LoggingSystem.Debug(
                         $"[DraftManager] Slot {state.SlotNumber} guaranteed " +
                         $"{state.GuaranteedFaction.Value} card: {(RoleTypes)offered[0]}");
+                }
+                else
+                {
+                    LoggingSystem.Debug(
+                        $"[DraftManager] Slot {state.SlotNumber} guaranteed faction " +
+                        $"{state.GuaranteedFaction.Value} is exhausted, filling with available");
                 }
             }
 
@@ -532,6 +550,7 @@ namespace DraftModeTOUM.Managers
             // FIX: Guard against draft ending while coroutine was waiting
             if (!IsDraftActive) yield break;
             DraftModePlugin.Logger.LogInfo($"[DraftManager] Auto-submitting forced pick at index {cardIndex}");
+            LoggingSystem.Debug($"[DraftManager] Auto-submitting forced pick at index {cardIndex}");
             SubmitPick(playerId, cardIndex);
         }
 
@@ -593,7 +612,7 @@ namespace DraftModeTOUM.Managers
             else if (faction == RoleFaction.NeutralKilling) _neutralKillingsDrafted++;
             else if (faction == RoleFaction.Neutral)        _neutralPassivesDrafted++;
 
-            DraftModePlugin.Logger.LogInfo(
+            LoggingSystem.Debug(
                 $"[DraftManager] Slot {state.SlotNumber} picked {(RoleTypes)roleId} ({faction}). " +
                 $"Caps: Imp={_impostorsDrafted}/{MaxImpostors}, " +
                 $"NK={_neutralKillingsDrafted}/{MaxNeutralKillings}, " +
@@ -653,11 +672,11 @@ namespace DraftModeTOUM.Managers
                 if (!state.ChosenRoleId.HasValue) continue;
                 if (state.PlayerId >= 200) continue;
                 PendingRoleAssignments[state.PlayerId] = (RoleTypes)state.ChosenRoleId.Value;
-                DraftModePlugin.Logger.LogInfo(
+                LoggingSystem.Debug(
                     $"[DraftManager] Queued {(RoleTypes)state.ChosenRoleId.Value} for player {state.PlayerId}");
             }
 
-            DraftModePlugin.Logger.LogInfo(
+            LoggingSystem.Debug(
                 $"[DraftManager] {PendingRoleAssignments.Count} roles queued for game start");
         }
 
@@ -666,7 +685,7 @@ namespace DraftModeTOUM.Managers
             if (!AmongUsClient.Instance.AmHost) return true;
             if (PendingRoleAssignments.Count == 0) return true;
 
-            DraftModePlugin.Logger.LogInfo(
+            LoggingSystem.Debug(
                 $"[DraftManager] Attempting to apply " +
                 $"{PendingRoleAssignments.Count - _appliedPlayers.Count} remaining roles...");
 
@@ -678,7 +697,7 @@ namespace DraftModeTOUM.Managers
                     .FirstOrDefault(x => x.PlayerId == kvp.Key);
                 if (p == null)
                 {
-                    DraftModePlugin.Logger.LogWarning($"[DraftManager] Player {kvp.Key} not found yet — will retry");
+                    LoggingSystem.Warning($"[DraftManager] Player {kvp.Key} not found yet — will retry");
                     continue;
                 }
 
@@ -686,12 +705,12 @@ namespace DraftModeTOUM.Managers
                 {
                     p.RpcSetRole(kvp.Value, false);
                     _appliedPlayers.Add(kvp.Key);
-                    DraftModePlugin.Logger.LogInfo(
+                    LoggingSystem.Debug(
                         $"[DraftManager] Applied {kvp.Value} to {p.Data.PlayerName} (id {kvp.Key})");
                 }
                 catch (Exception ex)
                 {
-                    DraftModePlugin.Logger.LogWarning(
+                    LoggingSystem.Warning(
                         $"[DraftManager] RpcSetRole failed for player {kvp.Key}: {ex.Message} — will retry");
                 }
             }
@@ -699,7 +718,7 @@ namespace DraftModeTOUM.Managers
             bool allDone = _appliedPlayers.Count >= PendingRoleAssignments.Count;
             if (allDone)
             {
-                DraftModePlugin.Logger.LogInfo("[DraftManager] All roles applied successfully.");
+                LoggingSystem.Debug("[DraftManager] All roles applied successfully.");
                 PendingRoleAssignments.Clear();
                 _appliedPlayers.Clear();
             }
@@ -711,7 +730,7 @@ namespace DraftModeTOUM.Managers
             if (!AmongUsClient.Instance.AmHost) yield break;
             if (PendingRoleAssignments.Count == 0) yield break;
 
-            DraftModePlugin.Logger.LogInfo("[DraftManager] Starting role application retry loop...");
+            LoggingSystem.Debug("[DraftManager] Starting role application retry loop...");
 
             float elapsed  = 0f;
             float timeout  = 10f;
@@ -725,14 +744,14 @@ namespace DraftModeTOUM.Managers
                 bool done = ApplyPendingRolesOnGameStart();
                 if (done)
                 {
-                    DraftModePlugin.Logger.LogInfo($"[DraftManager] Role retry loop finished after {elapsed:F1}s");
+                    LoggingSystem.Debug($"[DraftManager] Role retry loop finished after {elapsed:F1}s");
                     yield break;
                 }
             }
 
             if (PendingRoleAssignments.Count > 0)
             {
-                DraftModePlugin.Logger.LogWarning("[DraftManager] Retry loop timed out — falling back to UpCommandRequests");
+                LoggingSystem.Warning("[DraftManager] Retry loop timed out — falling back to UpCommandRequests");
                 foreach (var kvp in PendingRoleAssignments)
                 {
                     if (_appliedPlayers.Contains(kvp.Key)) continue;
@@ -741,7 +760,7 @@ namespace DraftModeTOUM.Managers
                     if (role != null && p != null)
                     {
                         UpCommandRequests.SetRequest(p.Data.PlayerName, role.NiceName);
-                        DraftModePlugin.Logger.LogInfo(
+                        LoggingSystem.Debug(
                             $"[DraftManager] UpCommandRequests fallback: {role.NiceName} for {p.Data.PlayerName}");
                     }
                 }

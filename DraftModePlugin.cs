@@ -30,7 +30,8 @@ namespace DraftModeTOUM
         public override void Load()
         {
             Logger = Log;
-            Logger.LogInfo($"DraftModeTOUM v{PluginInfo.PLUGIN_VERSION} loading...");
+            LoggingSystem.Initialize(Logger);
+            LoggingSystem.Info($"DraftModeTOUM v{PluginInfo.PLUGIN_VERSION} loading...");
 
             try
             {
@@ -40,11 +41,11 @@ namespace DraftModeTOUM
                 ClassInjector.RegisterTypeInIl2Cpp<DraftCircleMinigame>();
                 ClassInjector.RegisterTypeInIl2Cpp<DraftStatusOverlay>();
                 ClassInjector.RegisterTypeInIl2Cpp<DraftRecapOverlay>();
-                Logger.LogInfo("Draft UI Components registered.");
+                LoggingSystem.Debug("Draft UI Components registered.");
             }
             catch (System.Exception ex)
             {
-                Logger.LogError($"Failed to register types: {ex}");
+                LoggingSystem.Error($"Failed to register types: {ex}");
             }
 
             _harmony = new Harmony(PluginInfo.PLUGIN_GUID);

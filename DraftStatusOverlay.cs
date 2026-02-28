@@ -209,6 +209,15 @@ namespace DraftModeTOUM
         }
 
         // ── Role card — exact CreateCard() port ───────────────────────────────────
+            var tmp = go.AddComponent(Il2CppInterop.Runtime.Il2CppType.Of<TextMeshPro>()).Cast<TextMeshPro>();
+            tmp.font = font;
+            tmp.fontMaterial = fontMat;
+            tmp.fontSize = fontSize;
+            tmp.color = color;
+            tmp.alignment = TextAlignmentOptions.Center;
+            tmp.fontStyle = bold ? FontStyles.Bold : FontStyles.Normal;
+            tmp.enableWordWrapping = false;
+            tmp.text = text;
 
         /// <summary>
         /// Instantiates and populates the card using the same code path as

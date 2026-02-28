@@ -1,11 +1,11 @@
-using MiraAPI.Roles;
-using MiraAPI.LocalSettings;
-using MiraAPI.Utilities;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using AmongUs.GameOptions;
 using DraftModeTOUM.Patches;
+using MiraAPI.LocalSettings;
+using MiraAPI.Roles;
+using MiraAPI.Utilities;
 using TownOfUs.Assets;
 using TownOfUs.Utilities;
 using UnityEngine;
@@ -102,13 +102,18 @@ namespace DraftModeTOUM.Managers
             var cards = new List<DraftRoleCard>();
             for (int i = 0; i < roleIds.Count; i++)
             {
-                ushort id = roleIds[i];
-                var role = ResolveRole(id);
+                ushort id   = roleIds[i];
+                var    role = ResolveRole(id);
 
                 string displayName = role?.NiceName ?? $"Role {id}";
                 string team = GetTeamLabel(role) ?? "Unknown";
                 Sprite icon = GetRoleIcon(role);
                 Color color = GetRoleColor(role);
+                // Everything resolved locally — host rename has zero effect
+                string displayName = role?.NiceName          ?? $"Role {id}";
+                string team        = GetTeamLabel(role)       ?? "Unknown";
+                Sprite icon        = GetRoleIcon(role);
+                Color  color       = GetRoleColor(role);
 
                 cards.Add(new DraftRoleCard(displayName, team, icon, color, i));
             }
@@ -157,7 +162,7 @@ namespace DraftModeTOUM.Managers
         public static Color GetRoleColor(RoleBehaviour? role)
         {
             if (role is ICustomRole cr) return cr.RoleColor;
-            if (role != null) return role.TeamColor;
+            if (role != null)           return role.TeamColor;
             return Color.white;
         }
 
