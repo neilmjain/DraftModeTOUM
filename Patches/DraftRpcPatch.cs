@@ -13,9 +13,10 @@ namespace DraftModeTOUM.Patches
         StartDraft   = 223,
         Recap        = 224,
         SlotNotify   = 225,
-        PickerReady    = 226,
-        PickConfirmed  = 227,
-        ForceRole      = 228
+        PickerReady  = 226,
+        PickConfirmed = 227,
+        ForceRole    = 228,
+        CancelDraft  = 229
     }
 
     [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
@@ -98,6 +99,9 @@ namespace DraftModeTOUM.Patches
                         {
                             state.ChosenRoleId = roleId;
                             state.HasPicked    = true;
+                            // If this is our own pick, show the role card
+                            if (state.PlayerId == PlayerControl.LocalPlayer.PlayerId)
+                                DraftStatusOverlay.NotifyLocalPlayerPicked(roleId);
                         }
                     }
                     else
@@ -120,6 +124,16 @@ namespace DraftModeTOUM.Patches
                         byte targetId   = reader.ReadByte();
                         DraftManager.SetForcedDraftRole(roleName, targetId);
                         DraftModePlugin.Logger.LogInfo($"[DraftRpcPatch] Host received ForceRole '{roleName}' for player {targetId}");
+                    }
+                    return false;
+
+                case DraftRpc.CancelDraft:
+                    // Clients hide all UI and reset state when host cancels
+                    if (!AmongUsClient.Instance.AmHost)
+                    {
+                        DraftUiManager.CloseAll();
+                        DraftStatusOverlay.SetState(OverlayState.Hidden);
+                        DraftManager.Reset(cancelledBeforeCompletion: true);
                     }
                     return false;
 
@@ -179,6 +193,38 @@ namespace DraftModeTOUM.Patches
                 DraftUiManager.ShowPicker(roleIds.ToList());
             else
                 DraftUiManager.CloseAll();
+        }
+    }
+
+    [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnPlayerLeft))]
+    public static class PlayerLeftDraftPatch
+    {
+        public static void Postfix(AmongUsClient __instance, InnerNet.ClientData data)
+        {
+            if (!AmongUsClient.Instance.AmHost) return;
+            if (!DraftManager.IsDraftActive) return;
+            if (data?.Character == null) return;
+
+            byte dcPlayerId = data.Character.PlayerId;
+            DraftModePlugin.Logger.LogInfo($"[DraftManager] Player {dcPlayerId} disconnected during draft");
+
+            // If it's the current picker's turn, auto-pick immediately for them
+            var picker = DraftManager.GetCurrentPickerState();
+            if (picker != null && picker.PlayerId == dcPlayerId)
+            {
+                DraftModePlugin.Logger.LogInfo($"[DraftManager] DC'd player was current picker — auto-picking");
+                DraftManager.SubmitPick(dcPlayerId, int.MaxValue); // MaxValue forces PickFullRandom
+                return;
+            }
+
+            // If a future slot belongs to the DC'd player, mark them as picked
+            // with a random role so their turn is skipped automatically when reached
+            var dcState = DraftManager.GetStateForPlayer(dcPlayerId);
+            if (dcState != null && !dcState.HasPicked)
+            {
+                DraftModePlugin.Logger.LogInfo($"[DraftManager] Marking DC'd player slot {dcState.SlotNumber} for auto-skip");
+                dcState.IsDisconnected = true;
+            }
         }
     }
 
@@ -247,7 +293,14 @@ namespace DraftModeTOUM.Patches
         {
             // Update host state directly
             var state = DraftManager.GetStateForSlot(slot);
-            if (state != null) { state.ChosenRoleId = roleId; state.HasPicked = true; }
+            if (state != null)
+            {
+                state.ChosenRoleId = roleId;
+                state.HasPicked    = true;
+                // If the host is the picker, show their role card now
+                if (state.PlayerId == PlayerControl.LocalPlayer.PlayerId)
+                    DraftStatusOverlay.NotifyLocalPlayerPicked(roleId);
+            }
 
             var writer = AmongUsClient.Instance.StartRpcImmediately(
                 PlayerControl.LocalPlayer.NetId,
@@ -299,6 +352,15 @@ namespace DraftModeTOUM.Patches
                 writer.Write(myId);
                 AmongUsClient.Instance.FinishRpcImmediately(writer);
             }
+        }
+
+        public static void BroadcastCancelDraft()
+        {
+            var writer = AmongUsClient.Instance.StartRpcImmediately(
+                PlayerControl.LocalPlayer.NetId,
+                (byte)DraftRpc.CancelDraft,
+                Hazel.SendOption.Reliable, -1);
+            AmongUsClient.Instance.FinishRpcImmediately(writer);
         }
 
         public static void BroadcastRecap(List<RecapEntry> entries, bool showRecap)
